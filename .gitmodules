@@ -1,0 +1,3 @@
+[submodule "integrations/k3-auto"]
+	path = integrations/k3-auto
+	url = https://github.com/liulog/k3-auto.git

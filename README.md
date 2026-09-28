@@ -166,6 +166,26 @@ RPC 模式在各阶段目录增加 `rpc.jsonl` 和 `stderr.log`。通过 `workfl
 - 崩溃可能留下 `daemon.lock`：先检查记录的 PID、确认旧 Worker 均已退出，再手动删除陈旧锁并重启。不能仅因连接断开就启动第二个调度器。
 - 完成消息只有进入 Pi transcript 后才确认持久化投递游标。服务端状态和 Pi transcript 无法跨系统原子提交，仍可能重放；恢复后按实验 ID 查询事实，重复提交使用原 key。
 
+## 预留集成：k3-auto submodule
+
+[`integrations/k3-auto`](integrations/k3-auto) 引用 [liulog/k3-auto](https://github.com/liulog/k3-auto)，预留给未来 **测试 Pi Agent** 使用，用于开发板连接、benchmark 执行及相关 skill 集成。
+
+当前仅作为固定提交版本的 Git submodule 保存：**不自动加载 skill、不执行其中脚本、不连接开发板，也不影响现有模拟 workflow**。真实接入和权限边界将在后续扩充。
+
+首次克隆时可同时获取：
+
+```bash
+git clone --recurse-submodules git@github.com:liulog/k3-agent-workflow.git
+```
+
+已有克隆可获取主仓库锁定的版本：
+
+```bash
+git submodule update --init --recursive
+```
+
+运行当前 demo 不需要初始化此 submodule。未来更新其版本时，应审阅上游变更，再单独提交主仓库中的 submodule 指针，不自动跟随上游最新提交。
+
 ## 当前边界
 
 这不是生产级硬件控制系统，也不是 OS 安全沙箱：同一用户的 Pi `read,write` 仍有该用户的文件权限。HTTP token 防止无授权的本机请求，不隔离同用户 Worker。
