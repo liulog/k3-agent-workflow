@@ -1,0 +1,9 @@
+node_modules/
+.workflow/
+coverage/
+*.log
+.env
+__pycache__/
+output/**/*.svg
+output/**/*.png
+output/**/*.pptx

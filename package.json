@@ -1,0 +1,19 @@
+{
+  "name": "k3-agent-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local asynchronous Pi build/test orchestration (hardware-free demo)",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "start": "node src/cli.ts serve",
+    "demo": "node scripts/demo.ts",
+    "test": "node --test tests/*.test.ts"
+  },
+  "keywords": ["pi-package"],
+  "pi": { "extensions": ["./extension/index.ts"] },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

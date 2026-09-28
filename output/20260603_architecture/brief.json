@@ -1,0 +1,32 @@
+{
+  "scheme": "S2",
+  "layout": "node",
+  "flow": "left-right",
+  "flow_chain": [
+    "main",
+    "daemon",
+    "worker"
+  ],
+  "palette_role": {
+    "main": {
+      "fill": "#d1e6f1",
+      "stroke": "#0072b2"
+    },
+    "daemon": {
+      "fill": "#faeed1",
+      "stroke": "#e69f00"
+    },
+    "worker": {
+      "fill": "#d1eee6",
+      "stroke": "#009e73"
+    },
+    "storage": {
+      "fill": "#faeed1",
+      "stroke": "#e69f00"
+    },
+    "pipeline": {
+      "fill": "#d1eee6",
+      "stroke": "#009e73"
+    }
+  }
+}
