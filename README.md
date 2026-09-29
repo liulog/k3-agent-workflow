@@ -1,8 +1,27 @@
 # K3 Agent Workflow
 
+![K3 Agent Workflow 系统组件关系总览](assets/system-overview.png)
+
+[查看高清总览](assets/system-overview.png)。此图用于理解组件关系；其中“分析结果”是主会话的行为，不是独立服务。HTTP 请求/202 响应及 SSE 的实际端点均为 **workflow 扩展 ↔ workflowd**，具体方向以[协议图](docs/architecture.svg)和[时序图](docs/sequence.svg)为准。图中的 Luna 子进程对应可选 RPC demo 模式，默认模式不启动它们。
+
 为 Pi 编写的轻量异步实验编排器：**Astra 主会话提出候选，独立 build/test Worker 执行任务，完成事件自动回到主会话**。
 
 > 当前版本是 **hardware-free MVP**：验证任务编排，不编译汇编、不连接开发板，也不产生真实性能数据。所有结果均标记 `simulated: true`。不需要安装第三方 workflow 扩展、数据库服务或消息队列。
+
+## workflowd 是什么？
+
+**`workflowd` 是本项目自己编写的 TypeScript 后台编排服务，不是第三方产品，也不是 Agent。** 名字中的 `d` 表示 daemon（后台服务）；当前没有同名独立可执行文件，实际通过 `node src/cli.ts serve` 启动。
+
+| 部分 | 来源 | 作用 |
+|---|---|---|
+| `workflowd` 的调度逻辑 | 本项目自写：`src/engine.ts` | 固定 build→test 状态机、并发槽位、产物校验 |
+| HTTP / SSE 服务 | 本项目自写：`src/server.ts`，使用 Node 内置 HTTP 模块 | 接收任务、返回 ID、推送事件 |
+| 持久化 | 本项目自写：`src/store.ts`，使用 Node 内置 `node:sqlite` 接口及 SQLite | 保存实验状态和事件 |
+| Pi Worker 接入 | 本项目自写：`src/rpc-worker.ts`，使用 Pi 已有的 RPC 协议 | 启动 Pi 子进程，通过 stdin/stdout JSONL 通信 |
+| 主控扩展 | 本项目自写：`extension/`，使用 Pi 的扩展 API | 给 Astra 提供工具，并将结果送回会话 |
+| Agent 运行时 | 已有的 Pi | 模型调用、工具执行、会话管理 |
+
+因此当前组合是 **“已有 Pi + 自写轻量编排层 + Node/SQLite 基础设施”**，没有使用 Temporal、Prefect、LangGraph 等工作流框架。前面讨论这些工具是在评估未来替换自写调度内核的可能性，并非它们已经接入。
 
 ## 三个 Agent 如何协作
 
