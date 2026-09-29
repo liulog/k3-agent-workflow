@@ -4,31 +4,23 @@
   "flow": "none",
   "flow_chain": [],
   "palette_role": {
-    "main": {
+    "s-main": {
       "fill": "#d1e6f1",
       "stroke": "#0072b2"
     },
-    "extension": {
+    "s-extension": {
       "fill": "#d1e6f1",
       "stroke": "#0072b2"
     },
-    "daemon": {
+    "s-daemon": {
       "fill": "#faeed1",
       "stroke": "#e69f00"
     },
-    "build": {
+    "s-build": {
       "fill": "#d1eee6",
       "stroke": "#009e73"
     },
-    "test": {
-      "fill": "#d1eee6",
-      "stroke": "#009e73"
-    },
-    "storage": {
-      "fill": "#faeed1",
-      "stroke": "#e69f00"
-    },
-    "future": {
+    "s-test": {
       "fill": "#d1eee6",
       "stroke": "#009e73"
     }

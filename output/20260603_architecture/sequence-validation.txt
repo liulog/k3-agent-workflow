@@ -1,0 +1,18 @@
+Score: 100
+[PASS] No element collisions detected.
+[PASS] All elements are within canvas boundaries.
+[PASS] All text fits within canvas and containers.
+[PASS] No text overlaps shapes or other text.
+[PASS] Canvas coverage is optimal (10.64%).
+[PASS] All 14 connection(s) land on node borders (tol=12.0px).
+[PASS] No phantom (invisible) anchor nodes.
+[PASS] No edge routes through an unrelated node interior.
+[PASS] No edge crossings.
+[PASS] Composition budget met (bends/stretch/gutter/text-obstacle).
+[PASS] Same-kind node spacing meets minimum gap.
+[PASS] Same-kind peers share a row/column alignment edge.
+[PASS] Type scale: 4 size(s) [14.0, 18.0, 22.0, 28.0] (<=4, well-separated).
+[PASS] Palette: 6 accent color(s) (6 chromatic), light background, no luminance clash.
+[PASS] Text meets WCAG AA contrast against its fill.
+[WARN] [semantic:label-orphan] middle-anchored label 'Auto OFF: display/st' at (720,1460) is not inside (nor near) any node box.
+[WARN] [semantic:label-orphan] middle-anchored label 'Any build/validation' at (720,1500) is not inside (nor near) any node box.

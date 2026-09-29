@@ -3,21 +3,20 @@ Score: 100
 [PASS] All elements are within canvas boundaries.
 [PASS] All text fits within canvas and containers.
 [PASS] No text overlaps shapes or other text.
-[PASS] Canvas coverage is optimal (33.71%).
-[PASS] All 5 connection(s) land on node borders (tol=12.0px).
+[PASS] Canvas coverage is optimal (40.32%).
+[PASS] All 11 connection(s) land on node borders (tol=12.0px).
 [PASS] No phantom (invisible) anchor nodes.
 [PASS] No edge routes through an unrelated node interior.
 [PASS] No edge crossings.
 [PASS] Composition budget met (bends/stretch/gutter/text-obstacle).
 [PASS] Same-kind node spacing meets minimum gap.
 [PASS] Same-kind peers share a row/column alignment edge.
-[PASS] Type scale: 4 size(s) [12.0, 14.0, 18.0, 24.0] (<=4, well-separated).
+[PASS] Type scale: 4 size(s) [14.0, 18.0, 22.0, 28.0] (<=4, well-separated).
 [PASS] Palette: 6 accent color(s) (6 chromatic), light background, no luminance clash.
 [PASS] Text meets WCAG AA contrast against its fill.
-[WARN] [semantic:label-orphan] middle-anchored label 'HTTP' at (430,136) is not inside (nor near) any node box.
-[WARN] [semantic:label-orphan] middle-anchored label 'JSONL' at (850,136) is not inside (nor near) any node box.
-[WARN] [semantic:label-orphan] middle-anchored label 'Completion channel: ' at (220,510) is not inside (nor near) any node box.
-[WARN] [semantic:label-orphan] middle-anchored label 'Replay cursor • reco' at (220,552) is not inside (nor near) any node box.
-[WARN] [semantic:label-orphan] middle-anchored label 'Auto continuation is' at (220,588) is not inside (nor near) any node box.
-[WARN] [semantic:label-orphan] middle-anchored label 'Solid: task / state ' at (640,724) is not inside (nor near) any node box.
-[WARN] [semantic:label-orphan] middle-anchored label 'Future board adapter' at (640,762) is not inside (nor near) any node box.
+[WARN] [semantic:label-orphan] middle-anchored label 'tool call ↓' at (205,362) is not inside (nor near) any node box.
+[WARN] [semantic:label-orphan] middle-anchored label '↑ sendMessage' at (205,414) is not inside (nor near) any node box.
+[WARN] [semantic:label-orphan] middle-anchored label 'state + files' at (635,855) is not inside (nor near) any node box.
+[WARN] [semantic:label-orphan] middle-anchored label 'future adapter' at (1143,855) is not inside (nor near) any node box.
+[WARN] [semantic:label-orphan] middle-anchored label 'Solid = request / st' at (720,1145) is not inside (nor near) any node box.
+[WARN] [semantic:label-orphan] middle-anchored label 'Control: tools + HTT' at (720,1182) is not inside (nor near) any node box.

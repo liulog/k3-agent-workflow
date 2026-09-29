@@ -4,17 +4,58 @@
 
 > 当前版本是 **hardware-free MVP**：验证任务编排，不编译汇编、不连接开发板，也不产生真实性能数据。所有结果均标记 `simulated: true`。不需要安装第三方 workflow 扩展、数据库服务或消息队列。
 
-## 架构
+## 三个 Agent 如何协作
 
-![K3 Agent Workflow 架构](docs/architecture.svg)
+**不是三个 Agent 相互聊天，而是 Astra 发起实验，确定性的编排器依次委派给编译 Luna、测试 Luna，再将经过校验的结果推回 Astra。** 编译 Agent 不直接调用测试 Agent，也不互相传递会话历史。
 
-- **主会话扩展**：四个模型工具、`/workflow` 命令、状态栏、异步完成消息。
-- **后台服务**：本机 HTTP + bearer token、SQLite 任务/事件、固定 build→test 依赖、每 workflow 最多 5 次实验。
-- **两个 Worker 槽位**：build 和 test 各一个，可以流水线重叠；同阶段不并发。默认是无模型的确定性模拟 Worker。
-- **可选 Pi RPC Worker**：每个阶段启动一个独立 Pi 进程/上下文，用 JSONL 通信；必须等 `agent_settled`，之后还要校验实际产物。这个模式同样只做模拟，但会消耗模型 token。
-- **SSE 完成通道**：扩展后台订阅，不让模型循环查询。支持事件重放、断线重连、去重和单订阅者控制。
+### 图一：角色、进程边界和通信链路
 
-图中的开发板接入仅是未来方向，**没有实现 SSH、串口、刷写或真实编译**。详细约定见 [设计说明](docs/design.md)。
+[查看完整协作图](docs/architecture.svg)
+
+![三个 Pi Agent 的协作、通信协议及未来开发板接入](docs/architecture.svg)
+
+> 图中展示 **可选 Pi RPC demo 模式**。默认启动时，两个 Luna 子进程替换成无模型的模拟 Worker。两种模式目前均不编译、不连接开发板。所有 Pi 进程运行在主机上，不在开发板上运行。
+
+| 角色 | 职责 | 边界 |
+|---|---|---|
+| 主 Agent：Astra | 修改/提出汇编候选，提交实验，分析返回结果，决定下一轮 | 不直接给子 Agent 发 RPC，不直接控制开发板 |
+| 主控扩展 | 把工具调用转成 HTTP；订阅 SSE，把结果放回 Pi 会话 | 在 Astra 的 Pi 进程内，**不是额外 Agent** |
+| `workflowd` | 持久化任务，安排 build→test，校验产物和结果，发布事件 | TypeScript 程序，**不是 LLM**；只有它调度 Worker |
+| 编译 Agent：Luna | 接受 build 阶段委派；当前生成模拟 artifact 和结果文件 | 每任务独立 Pi RPC 子进程，单 build 槽位 |
+| 测试 Agent：Luna | 接收已登记的产物路径/哈希；当前生成模拟测试结果 | 每任务独立 Pi RPC 子进程，单 test 槽位 |
+| `k3-auto`（未来） | 给测试 Agent 提供板测相关 skill / 工具 | 仅保留 submodule；尚未加载或调用 |
+
+### 通信协议：每条链路传什么
+
+| 链路 | 协议/接口 | 传递内容 |
+|---|---|---|
+| Astra → 主控扩展 | Pi 本地工具调用 | `workflow_submit({key,candidate,hypothesis})`；查询/取消也通过工具 |
+| 扩展 → `workflowd` | 本机 HTTP + JSON，bearer token | `POST /workflows/:name/experiments`；返回 **202 + 实验 ID** |
+| `workflowd` → 编译/测试 Luna | Pi RPC：stdin 上逐行 JSON | `{"id":"job","type":"prompt","message":"阶段任务与产物契约…"}` |
+| Luna → `workflowd` | Pi RPC：stdout 上逐行 JSON | 接受响应、消息/工具事件、`message_end`、`agent_settled`；stderr 单独记录 |
+| 编译阶段 → 测试阶段 | **不是网络聊天；由编排器交接本地文件引用** | 构建产物路径 + SHA-256；测试只在构建产物校验通过后派发 |
+| Worker → 编排器的业务结果 | 阶段目录中的 `result.json` 和产物文件 | 结构化结果由编排器校验；不能用 Agent 的一句“完成了”替代 |
+| `workflowd` → 扩展 | SSE，`GET /workflows/:name/events?after=N` | 进度、终态事件 JSON；带事件 ID，支持断线重放 |
+| 扩展 → Astra/Pi 会话 | `pi.sendMessage`，`deliverAs: "followUp"` | 完成事件进入会话；只有开启 auto 才触发模型续轮 |
+| 测试 Agent → 开发板（未来） | 计划通过 `k3-auto` skill/工具使用 SSH、串口等 | 尚未实现，不属于当前 RPC/SSE 链路 |
+
+### 图二：一次实验的完整时序
+
+[查看完整时序图](docs/sequence.svg)
+
+![候选提交、编译委派、测试委派、结果校验和异步回传时序](docs/sequence.svg)
+
+1. 扩展先建立 SSE 订阅。Astra 提交候选，服务固化源码并登记实验，立即返回 ID；Astra 不需要反复轮询。
+2. 编排器派发 build。**RPC prompt accepted 只表示已接受任务**；等到 `agent_settled` 后，还要确认正常结束、检查结果文件和哈希。
+3. 校验通过才派发 test，并传递明确的产物身份。构建失败则跳过 test，直接产生失败事件。
+4. 测试结束后，编排器校验指标、正确性和产物身份，持久化终态，再经 SSE 推送结果。
+5. 扩展将结果送入主会话。auto OFF 仅显示/保存；auto ON 才让 Astra 继续分析并决定是否提交下一轮。图末的 `message_end` 是 **Pi runtime 的 transcript 事件**，不是 Astra 额外调用模型确认。
+
+**三个“完成”不能混淆：HTTP 202 ≠ RPC accepted ≠ 实验成功。** `agent_settled` 也只说明 Agent 不会再自动继续，业务成功仍需编排器校验。
+
+同一个实验必须 build→test 串行；不同实验可以 build(N+1) 与 test(N) 重叠。build/test 各一个槽位，测试任务全局串行；这尚不等同于未来真实开发板的设备锁与故障恢复机制。
+
+详细消息示例与故障语义见 [通信协议说明](docs/communication.md)，状态机和实现约定见 [设计说明](docs/design.md)。
 
 ## 1. 零安装跑 demo
 
@@ -209,7 +250,7 @@ git submodule update --init --recursive
 
 ## 架构图源码
 
-使用本地 `architecture-drawer` skill 生成、评估 SVG，并将其复制到 `docs/architecture.svg` 供 README 展示。
+使用本地 `architecture-drawer` skill 生成、评估两张 SVG，并复制到 `docs/architecture.svg` 与 `docs/sequence.svg` 供 README 展示。
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 output/20260603_architecture/gen_architecture.py
@@ -218,7 +259,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 output/20260603_architecture/gen_architecture.
 默认查找 `~/.pi/agent/skills/architecture-drawer`，可用 `ARCHITECTURE_DRAWER_HOME` 覆盖。
 
 - [生成脚本](output/20260603_architecture/gen_architecture.py)
-- [设计契约](output/20260603_architecture/brief.json)
-- [图形验证报告](output/20260603_architecture/validation.txt)
+- 设计契约：[协作图](output/20260603_architecture/brief.json) / [时序图](output/20260603_architecture/sequence-brief.json)
+- 图形验证报告：[协作图](output/20260603_architecture/validation.txt) / [时序图](output/20260603_architecture/sequence-validation.txt)
 
 生成目录中的 SVG/PNG/PPTX 是可再生文件，不纳入 Git；README 使用的 SVG 单独提交。PNG 可使用本机 ImageMagick 回退。可编辑 PPTX 依赖 `python-pptx`；当前机器未安装，因此没有生成 PPTX，也没有擅自安装依赖。
