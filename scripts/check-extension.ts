@@ -21,9 +21,9 @@ try {
   const tools: any[] = [], commands: string[] = [], events: string[] = [];
   extension({ registerTool: (tool: any) => { api.defineTool(tool); tools.push(tool); },
     registerCommand: (name: string) => commands.push(name), on: (name: string) => events.push(name) } as any);
-  assert.equal(tools.length, 4);
+  assert.equal(tools.length, 5);
   assert.ok(tools.every(tool => tool.parameters.type === "object" && typeof tool.execute === "function"));
   assert.deepEqual(commands, ["workflow"]);
   assert.ok(events.includes("session_shutdown"));
-  console.log("PASS: real extension entry loads against installed Pi exports; four schema-backed tools and /workflow registered. No session/model was started.");
+  console.log("PASS: real extension entry loads against installed Pi exports; five schema-backed tools and /workflow registered. No session/model was started.");
 } finally { hooks.deregister(); }

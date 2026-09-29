@@ -2,6 +2,8 @@
 
 Agent 分工、进程边界和逐条消息示例见 [通信协议说明](communication.md)；图示见 [协作图](architecture.svg) / [时序图](sequence.svg)。
 
+新增 `linux-k3-plan` 是同一编排器中的独立只读 profile，交接 Build 计划而不是模拟 artifact；数据契约和硬边界见 [plan-only](plan-only.md)，真实模型验证见 [实验记录](experiments/linux-k3-plan-smoke.md)。下文原有 `simulated` 结果格式描述的是 `demo` profile。
+
 ## 决策记录
 
 1. 使用独立后台进程，而不是由主控扩展启动/持有任务执行器。扩展关闭不影响任务。

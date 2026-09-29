@@ -1,6 +1,6 @@
 # Agent 协作与通信协议
 
-本文对应当前源码，而不是尚未实现的目标架构。两张图均以 **Pi RPC demo 模式**为例；默认无模型 demo 使用相同 HTTP/SSE 和任务状态机，但不启动 Luna 子进程。
+本文说明原 **Pi RPC demo 模式**的协议；默认无模型 demo 使用相同 HTTP/SSE 和任务状态机，但不启动 Luna 子进程。新增 `linux-k3-plan` 沿用这些通道，但交接计划、只开放受限 read，并显式加载 k3-auto skill 快照，详见 [只读预演指南](plan-only.md)。两张原架构图仍以 demo 模式为例。
 
 - [协作与协议图](architecture.svg)
 - [一次实验的时序图](sequence.svg)
@@ -212,13 +212,13 @@ pi.sendMessage(
 
 图中成功路径不是绝对的事件时序保证：Pi 很快时，prompt 接受响应与部分事件可能交错；适配器等待“接受响应 + settled”两个条件，而不是依赖相邻消息顺序。不同实验的事件也可能交错，用实验 ID 区分。
 
-## 8. k3-auto 在哪里接入（未实现）
+## 8. k3-auto 在哪里接入（真实执行未实现）
 
 将来应在 **测试 Worker 的受控工具/skill 层**接入 `integrations/k3-auto`，不是替换主控 SSE，也不是让开发板直接跟 Astra 聊天。
 
 skill 本质上是给 Agent 的操作说明/资源，不是传输协议；其工具或脚本才可能通过 SSH、串口等连接开发板。具体板测协议、部署命令和授权范围尚未接线验证。
 
-当前 RPC Worker 带 `--no-skills`，只开放 `read,write`，所以不会自动加载这个 submodule。正式启用前还需增加受控工具、设备独占租约、刷写安全边界、恢复流程及真实结果契约。
+原 demo RPC Worker 带 `--no-skills`，只开放 `read,write`，不会自动加载 submodule。新增 plan-only Worker 则只开放受限 read，并通过显式 `--skill` 注册三个 skill 快照，已验证只读规划交接；它不执行 skill 脚本。正式启用硬件前还需增加受控工具、设备独占租约、刷写安全边界、恢复流程及真实结果契约。
 
 ## 源码导航
 

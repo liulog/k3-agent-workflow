@@ -24,10 +24,10 @@ test("extension registers tools, subscribes, delivers follow-up, cleans up and d
     sendMessage(message: any, options: any) { messages.push({ message, options }); },
   };
   const ctx = { hasUI: true, ui: { setStatus(_key: string, text: string) { statuses.push(text ?? ""); }, notify(text: string) { notifications.push(text); } }, sessionManager: { getBranch: () => entries } };
-  registerWorkflow(pi as any, { submit: {}, id: {}, empty: {} });
+  registerWorkflow(pi as any, { submit: {}, plan: {}, id: {}, empty: {} });
   cleanup(t, () => hooks.get("session_shutdown")());
   await hooks.get("session_start")({}, ctx);
-  assert.equal(tools.size, 4);
+  assert.equal(tools.size, 5);
   await assert.rejects(tools.get("workflow_submit").execute("x", {}), /Not attached/);
   await command.handler("attach assembly", ctx);
   await until(() => statuses.some(s => s.includes("connected")));

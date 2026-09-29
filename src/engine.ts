@@ -3,20 +3,23 @@ import { mkdirSync, readFileSync, writeFileSync, lstatSync, realpathSync } from 
 import { join, resolve, sep } from "node:path";
 import { Store } from "./store.ts";
 import { ApiError, terminal, validateSubmit, workflowName } from "./types.ts";
-import type { Experiment, Stage, Worker } from "./types.ts";
+import type { Experiment, Stage, Worker, PlanningOptions } from "./types.ts";
+import { snapshotPlanning, verifyPlanning, validatePlan, validateEvidence } from "./planning.ts";
 
 export const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 export class Engine {
   store: Store;
   root: string;
   workers: Record<Stage, Worker>;
+  planningOptions?: PlanningOptions;
   active = new Map<Stage, { id: string; controller: AbortController; promise: Promise<void> }>();
   stopping = false;
   timer?: ReturnType<typeof setInterval>;
-  constructor(root: string, workers: Record<Stage, Worker>) {
+  constructor(root: string, workers: Record<Stage, Worker>, planningOptions?: PlanningOptions) {
     this.root = resolve(root);
     mkdirSync(this.root, { recursive: true, mode: 0o700 });
     this.workers = workers;
+    this.planningOptions = planningOptions;
     this.store = new Store(join(this.root, "state.sqlite"));
     // Never blindly replay jobs whose side effects may have started before a crash.
     this.store.transaction(() => {
@@ -39,15 +42,18 @@ export class Engine {
         if (JSON.stringify(duplicate.request) !== JSON.stringify(request)) throw new ApiError(409, "Idempotency key reused with different input");
         return duplicate;
       }
+      if (request.profile === "linux-k3-plan" && !this.planningOptions) throw new ApiError(409, "linux-k3-plan is not configured; start serve with --plan-config");
       const info = this.store.info(workflow);
       if (this.store.all(workflow).length >= info.budget) throw new ApiError(409, "Experiment budget exhausted (5 per workflow)");
       const id = `exp-${randomUUID()}`;
       const directory = join(this.root, "runs", id);
       mkdirSync(directory, { recursive: true, mode: 0o700 });
-      const exp: Experiment = { id, workflow, request, sourceHash: hash(request.candidate), directory,
+      const source = request.profile === "demo" ? request.candidate : JSON.stringify(request);
+      const exp: Experiment = { id, workflow, request, sourceHash: hash(source), directory,
         status: "queued", stage: "build", createdAt: new Date().toISOString() };
-      // Snapshot the exact supplied bytes before acknowledging submission.
-      writeFileSync(join(directory, "candidate.s"), request.candidate, { mode: 0o400 });
+      // A planning request snapshots selected documents, never the live repository or secrets.
+      if (request.profile === "linux-k3-plan") exp.planning = snapshotPlanning(directory, this.planningOptions!.linuxRepo, this.planningOptions!.k3Root);
+      writeFileSync(join(directory, request.profile === "demo" ? "candidate.s" : "task.json"), source, { mode: 0o400 });
       writeFileSync(join(directory, "manifest.json"), JSON.stringify(exp, null, 2), { mode: 0o400 });
       this.change(exp, "experiment.queued");
       return exp;
@@ -55,12 +61,27 @@ export class Engine {
   }
   change(exp: Experiment, type: string) {
     this.store.save(exp);
-    this.store.event(exp.workflow, type, { status: exp.status, stage: exp.stage, error: exp.error, result: exp.result, artifact: exp.artifact }, exp.id);
+    this.store.event(exp.workflow, type, { status: exp.status, stage: exp.stage, profile: exp.request.profile, error: exp.error, result: exp.result, artifact: exp.artifact }, exp.id);
   }
   get(workflow: string, id: string): Experiment {
     const exp = this.store.get(id);
     if (!exp || exp.workflow !== workflow) throw new ApiError(404, "Experiment not found");
     return exp;
+  }
+  result(workflow: string, id: string) {
+    const exp = this.get(workflow, id);
+    if (exp.request.profile !== "linux-k3-plan") return exp;
+    const plans: Record<string, unknown> = {};
+    if (exp.artifact) {
+      this.verifyArtifact(exp);
+      plans.build = JSON.parse(this.checkedFile(join(exp.directory, "build"), "result.json").toString());
+    }
+    if (exp.result && "mode" in exp.result && exp.result.mode === "plan-only") {
+      const bytes = this.checkedFile(join(exp.directory, "test"), "result.json");
+      if (hash(bytes) !== exp.result.testPlan.sha256) throw new Error("Test plan hash mismatch");
+      plans.test = JSON.parse(bytes.toString());
+    }
+    return { ...exp, plans };
   }
   pause(workflow: string, paused: boolean) {
     this.store.transaction(() => {
@@ -85,6 +106,11 @@ export class Engine {
     for (const stage of ["build", "test"] as const) {
       if (this.active.has(stage)) continue;
       const exp = this.store.all().find(e => e.status === "queued" && e.stage === stage && !this.store.info(e.workflow).paused);
+      if (exp?.request.profile === "linux-k3-plan" && !this.planningOptions) {
+        exp.status = "needs_attention"; exp.error = "Planning workers are not configured after restart";
+        this.store.transaction(() => this.change(exp, "experiment.needs_attention"));
+        continue;
+      }
       if (!exp) continue;
       exp.status = "running";
       this.store.transaction(() => this.change(exp, `${stage}.started`));
@@ -101,10 +127,11 @@ export class Engine {
     return readFileSync(path);
   }
   private verifySource(exp: Experiment) {
-    if (hash(this.checkedFile(exp.directory, "candidate.s")) !== exp.sourceHash) throw new Error("Source snapshot was modified");
+    if (hash(this.checkedFile(exp.directory, exp.request.profile === "demo" ? "candidate.s" : "task.json")) !== exp.sourceHash) throw new Error("Source snapshot was modified");
+    if (exp.request.profile === "linux-k3-plan") verifyPlanning(exp);
   }
   private verifyArtifact(exp: Experiment) {
-    if (!exp.artifact || hash(this.checkedFile(join(exp.directory, "build"), "artifact.txt")) !== exp.artifact.sha256) throw new Error("Artifact hash mismatch");
+    if (!exp.artifact || hash(this.checkedFile(join(exp.directory, "build"), exp.request.profile === "demo" ? "artifact.txt" : "result.json")) !== exp.artifact.sha256) throw new Error("Artifact hash mismatch");
   }
   private async execute(exp: Experiment, signal: AbortSignal) {
     const stage = exp.stage;
@@ -113,10 +140,30 @@ export class Engine {
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       this.verifySource(exp);
       if (stage === "test") this.verifyArtifact(exp);
-      await this.workers[stage].run({ experiment: exp, stage, directory, signal });
+      const workers = exp.request.profile === "linux-k3-plan" ? this.planningOptions!.workers : this.workers;
+      await workers[stage].run({ experiment: exp, stage, directory, signal });
       signal.throwIfAborted();
       this.verifySource(exp);
       const result = JSON.parse(this.checkedFile(directory, "result.json").toString());
+      if (exp.request.profile === "linux-k3-plan") {
+        const report = validatePlan(result, exp, stage);
+        validateEvidence(JSON.parse(this.checkedFile(directory, "read-evidence.json").toString()), { experiment: exp, stage, directory, signal });
+        if (stage === "build") {
+          exp.artifact = { path: join(directory, "result.json"), sha256: hash(this.checkedFile(directory, "result.json")) };
+          exp.stage = "test"; exp.status = "queued";
+          this.store.transaction(() => this.change(exp, "build.succeeded"));
+        } else {
+          this.verifyArtifact(exp);
+          const build = JSON.parse(this.checkedFile(join(exp.directory, "build"), "result.json").toString());
+          exp.result = { mode: "plan-only", planningCompleted: true, buildExecuted: false, boardAccessed: false,
+            ...(build.simulated === true || report.simulated === true ? { simulated: true as const } : {}),
+            buildPlan: exp.artifact!, testPlan: { path: join(directory, "result.json"), sha256: hash(this.checkedFile(directory, "result.json")) },
+            summary: report.summary, blockers: [...new Set([...build.blockers, ...report.blockers])] };
+          exp.status = "succeeded";
+          this.store.transaction(() => this.change(exp, "experiment.succeeded"));
+        }
+        return;
+      }
       if (result.simulated !== true || result.kind !== stage) throw new Error("Invalid result: must explicitly be a simulated stage result");
       if (stage === "build") {
         if (result.sourceHash !== exp.sourceHash || result.artifact !== "artifact.txt") throw new Error("Build result identity mismatch");
@@ -143,7 +190,7 @@ export class Engine {
   async close() {
     this.stopping = true;
     clearInterval(this.timer);
-    for (const active of this.active.values()) active.controller.abort(new Error("Daemon shutting down (demo cancellation)"));
+    for (const active of this.active.values()) active.controller.abort(new Error("Daemon shutting down (non-executing task cancellation)"));
     await Promise.all([...this.active.values()].map(a => a.promise));
     this.store.close();
   }

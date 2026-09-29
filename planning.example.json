@@ -1,0 +1,8 @@
+{
+  "mode": "plan-only",
+  "linuxRepo": "../linux-riscv-gate",
+  "k3AutoRoot": "./integrations/k3-auto",
+  "build": { "model": "your-provider/luna" },
+  "test": { "model": "your-provider/luna" },
+  "timeoutMs": 300000
+}

@@ -3,6 +3,7 @@ node_modules/
 coverage/
 *.log
 .env
+planning.local.json
 __pycache__/
 output/**/*.svg
 output/**/*.png

@@ -6,7 +6,22 @@
 
 为 Pi 编写的轻量异步实验编排器：**Astra 主会话提出候选，独立 build/test Worker 执行任务，完成事件自动回到主会话**。
 
-> 当前版本是 **hardware-free MVP**：验证任务编排，不编译汇编、不连接开发板，也不产生真实性能数据。所有结果均标记 `simulated: true`。不需要安装第三方 workflow 扩展、数据库服务或消息队列。
+> 当前版本是 **hardware-free MVP**：不编译、不连接开发板、不产生真实性能数据。默认 `demo` 返回 `simulated: true`；新增 `linux-k3-plan` 返回 `mode: "plan-only"`，只生成计划，没有跑分。无需安装第三方 workflow 框架。
+
+## 新增：Build Luna → k3-auto/Test Luna 只读预演
+
+已用真实 `openai-codex/gpt-5.6-luna` 完成两个独立 Agent 的计划交接：Build 阅读 Linux 构建资料，Test 显式加载三个 k3-auto skill 并读取 Build 计划；全程只有受限 `read` 工具。**未运行编译、k3ctl、SSH、上下电或 benchmark。**
+
+```bash
+# planning.local.json 参照根目录 planning.example.json 配置，本机文件不入 Git
+node src/cli.ts check-plan --plan-config planning.local.json          # 静态检查，不调用模型
+node scripts/plan-experiment.ts --config planning.local.json         # 默认假 Pi，不调用模型
+node scripts/plan-experiment.ts --config planning.local.json --real-models  # 显式调用真实模型，仅规划
+```
+
+当前已有 PNG/SVG 展示原 `demo` 链路；新模式仍沿用相同的 HTTP→RPC→SSE 拓扑，但交接的是编译计划而不是模拟固件，并为 Test 显式加载 skill 的只读快照。
+
+完整说明与主 Agent 部署步骤：[只读预演指南](docs/plan-only.md)。真实实验的成功/失败经过和证据：[MVP 实验报告](docs/experiments/linux-k3-plan-smoke.md)。
 
 ## workflowd 是什么？
 
@@ -42,7 +57,7 @@
 | `workflowd` | 持久化任务，安排 build→test，校验产物和结果，发布事件 | TypeScript 程序，**不是 LLM**；只有它调度 Worker |
 | 编译 Agent：Luna | 接受 build 阶段委派；当前生成模拟 artifact 和结果文件 | 每任务独立 Pi RPC 子进程，单 build 槽位 |
 | 测试 Agent：Luna | 接收已登记的产物路径/哈希；当前生成模拟测试结果 | 每任务独立 Pi RPC 子进程，单 test 槽位 |
-| `k3-auto`（未来） | 给测试 Agent 提供板测相关 skill / 工具 | 仅保留 submodule；尚未加载或调用 |
+| `k3-auto` | 给测试 Agent 提供板测相关 skill / 工具 | demo 不加载；plan-only 显式加载只读 skill 快照；真实板测尚未接入 |
 
 ### 通信协议：每条链路传什么
 
@@ -174,7 +189,7 @@ hypothesis 为“验证异步链路，不评估真实性能”。
 | `/workflow cancel EXP_ID` | 请求取消，等待运行中的 Worker 真正退出 |
 | `/workflow detach` | 断开主会话，后台任务继续 |
 
-模型工具：`workflow_submit`、`workflow_status`、`workflow_result`、`workflow_cancel`。
+模型工具：`workflow_submit`（原模拟任务）、`workflow_plan_linux`（Linux→k3-auto 只读预演）、`workflow_status`、`workflow_result`、`workflow_cancel`。
 
 关闭 Pi 不会关闭后台服务；重新进入会话后显式 attach，扩展会按该会话分支中的游标补收事件。切换会话/分支会停止旧订阅。一个 workflow 同时只允许一个事件订阅者；另一个主会话想接管时，先 detach 旧会话。
 
@@ -198,7 +213,7 @@ node src/cli.ts serve --rpc-demo-model your-provider/luna
 - 要求生成模拟 artifact 和严格的 `result.json`，不提供 bash 工具；
 - 60 秒超时、输出大小限制、进程退出检测、取消与进程组清理。
 
-**本轮自动验证覆盖的是假 Pi 子进程的真实 JSONL 通信；没有调用真实模型。** 使用真实模型的手动 smoke test 需要你明确启动上述模式。不要据此认为已经完成真实编译/板测集成。
+本节的原 `demo` 模式通过假 Pi 子进程做协议回归。新增 `linux-k3-plan` 模式另已完成真实 Luna 只读预演，见 [实验报告](docs/experiments/linux-k3-plan-smoke.md)。两者都不代表已经完成真实编译/板测集成。
 
 ## 数据、日志与恢复
 
@@ -230,7 +245,7 @@ RPC 模式在各阶段目录增加 `rpc.jsonl` 和 `stderr.log`。通过 `workfl
 
 [`integrations/k3-auto`](integrations/k3-auto) 引用 [liulog/k3-auto](https://github.com/liulog/k3-auto)，预留给未来 **测试 Pi Agent** 使用，用于开发板连接、benchmark 执行及相关 skill 集成。
 
-当前仅作为固定提交版本的 Git submodule 保存：**不自动加载 skill、不执行其中脚本、不连接开发板，也不影响现有模拟 workflow**。真实接入和权限边界将在后续扩充。
+submodule 固定在已登记提交。默认 demo 不加载它；`linux-k3-plan` 将 `k3-benchmark`、`k3-lab`、`k3-status` 固化为快照，并通过显式 `--skill` 提供给 Test Luna。**只允许阅读，不执行其中脚本、不连接开发板**；真实执行与权限边界仍待扩充。
 
 首次克隆时可同时获取：
 
@@ -244,11 +259,11 @@ git clone --recurse-submodules git@github.com:liulog/k3-agent-workflow.git
 git submodule update --init --recursive
 ```
 
-运行当前 demo 不需要初始化此 submodule。未来更新其版本时，应审阅上游变更，再单独提交主仓库中的 submodule 指针，不自动跟随上游最新提交。
+运行原 demo 不需要初始化此 submodule；真实资料的 plan-only 预演需要初始化它。未来更新其版本时，应审阅上游变更，再单独提交主仓库中的 submodule 指针，不自动跟随上游最新提交。
 
 ## 当前边界
 
-这不是生产级硬件控制系统，也不是 OS 安全沙箱：同一用户的 Pi `read,write` 仍有该用户的文件权限。HTTP token 防止无授权的本机请求，不隔离同用户 Worker。
+这不是生产级硬件控制系统，也不是 OS 安全沙箱：原 demo Worker 的 `read,write` 仍有该用户的文件权限；plan-only 另以受限 `read` 工具强制执行资料白名单，但不隔离恶意同用户进程或 Pi runtime。HTTP token 防止无授权的本机请求，不代替操作系统隔离。
 
 当前不支持：真实构建配置、完整 Git 仓库快照、多板资源租约、远程 Worker、自动重试、产物 GC、预算在线修改、成本/时间总预算、跨机器认证。
 
@@ -263,7 +278,10 @@ git submodule update --init --recursive
 - 源码/产物篡改、符号链接、错误 identity、错误指标和正确性失败；
 - HTTP token、Origin 拒绝、单服务锁、SSE 补收、订阅者排他；
 - RPC prompt 拒绝、损坏 JSONL、Unicode 分隔符、提前 `agent_end`、模型报错、超时、进程消失、取消；
-- 扩展工具注册、完成通知、默认不开续轮、显式 follow-up、投递游标、detach 清理。
+- 扩展工具注册、完成通知、默认不开续轮、显式 follow-up、投递游标、detach 清理；
+- plan-only 配置、技能快照、只读工具、完整分页读取证据、计划哈希交接、禁止执行字段、读取拼写纠正与失败关闭。
+
+当前离线自动测试 **46 项通过**；另已做真实双 Luna 预演（人工启动，不放入默认测试）。
 
 这是运行时验证，不是 TypeScript 静态类型检查。本阶段没有运行 tsc、打包或安装依赖。
 

@@ -31,3 +31,14 @@ PPTX 导出因本机缺少 `python-pptx` 未执行；没有为此安装依赖。
 | `docs/sequence.svg` | 100 分，0 FAIL | 2 个底部说明 orphan-label WARN，0 FAIL |
 
 设计契约与详细报告位于 `output/20260603_architecture/`，其中 `sequence-*` 为新增时序图的记录。
+
+## Linux → k3-auto 只读预演修订
+
+- 离线测试：46 项通过（含只读路径与完整分页证据、skill 注册参数、计划 hash 交接、错误模式和重启处理）。
+- 静态资料检查：使用真实 linux-riscv-gate 和 submodule 文件通过，不调用模型或执行脚本。
+- 主控扩展导出检查：5 个工具注册通过，新增 `workflow_plan_linux`。
+- 假 Pi 端到端实验：通过。
+- 真实 `openai-codex/gpt-5.6-luna` 双 Worker：第一次因路径拼写错误被拒绝，局部修正后第二次通过。Build 完整读 6 个文件，Test 完整读 3 skills、2 文档及 Build 计划，计划 hash 一致。
+- 未编译、未执行 k3ctl/SSH/串口/上下电/benchmark；主 Astra 模型由脚本代替，交互式主会话尚待用户部署验证。
+
+详细证据、限制和复现入口见 [MVP 实验报告](experiments/linux-k3-plan-smoke.md)。
