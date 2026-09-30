@@ -26,4 +26,14 @@ try {
   assert.deepEqual(commands, ["workflow"]);
   assert.ok(events.includes("session_shutdown"));
   console.log("PASS: real extension entry loads against installed Pi exports; five schema-backed tools and /workflow registered. No session/model was started.");
+  const { default: realMain } = await import("../extension/real-main.ts");
+  const realTools: any[] = [];
+  realMain({ registerTool: (tool: any) => { api.defineTool(tool); realTools.push(tool); }, on: () => {} } as any);
+  assert.deepEqual(realTools.map(t => t.name), ["workflow_read_skills", "workflow_review_candidate", "workflow_accept_candidate", "workflow_execute_linux", "workflow_real_result"]);
+  assert.equal(typeof api.RpcClient, "function");
+  const { default: stageAgent } = await import("../extension/real-stage.ts");
+  const stageTools: any[] = [];
+  stageAgent({ registerTool: (tool: any) => { api.defineTool(tool); stageTools.push(tool); }, on: () => {} } as any);
+  assert.deepEqual(stageTools.map(t => t.name), ["stage_instructions", "stage_request_execution", "stage_result"]);
+  console.log("PASS: opt-in main/stage Agent extensions and installed RpcClient exports load; no task/model was started.");
 } finally { hooks.deregister(); }

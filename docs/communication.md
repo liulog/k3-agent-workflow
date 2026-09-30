@@ -1,233 +1,80 @@
 # Agent 协作与通信协议
 
-本文说明原 **Pi RPC demo 模式**的协议；默认无模型 demo 使用相同 HTTP/SSE 和任务状态机，但不启动 Luna 子进程。新增 `linux-k3-plan` 沿用这些通道，但交接计划、只开放受限 read，并显式加载 k3-auto skill 快照，详见 [只读预演指南](plan-only.md)。两张原架构图仍以 demo 模式为例。
+本文覆盖默认 demo、只读 plan 和 opt-in 真实执行三条路径。组件角色关系见[架构说明](overview.md)，真实操作边界见[真实执行说明](real-run.md)。
 
-- [协作与协议图](architecture.svg)
-- [一次实验的时序图](sequence.svg)
-- [状态机与权限边界](design.md)
-
-## 1. 谁和谁通信
+## 1. 实际关系：控制器中介，不是 Agent 群聊
 
 ```text
-Astra 的 Pi 进程
-  ├─ Astra：提出候选、分析结果
-  └─ workflow 扩展：本地 tools ↔ HTTP / SSE
-                       │
-               workflowd（不是模型）
-                       ├─ 子进程 stdin/stdout ↔ Build Pi / Luna
-                       └─ 子进程 stdin/stdout ↔ Test Pi / Luna
+User ↔ Main Pi Agent（Sol）+ Main 扩展
+                    │ 本机 HTTP/JSON：提交实验
+                    ▼
+             Node Coordinator
+             Engine + SQLite + SSE
+                    │ Pi RPC JSONL：阶段快照
+                    ├─ Build Pi Agent（Luna）→ 固定 Build executor
+                    └─ Test Pi Agent（Luna） → 固定 Test executor → k3-auto / 板卡
+                    │
+                    └──────── SSE 终态 → Main 同一 Pi 会话查结果 → User
 ```
 
-三个 Agent 不使用“共享群聊”，不需要 MCP、Redis、消息中间件，也不共享完整聊天上下文。编译/测试 Agent 每个阶段使用新进程和新上下文，只有编排器知道阶段依赖与任务状态。
+真实入口中，Node Coordinator 与 HTTP/SSE 服务由 `scripts/real-experiment.ts --execute` 同一 Node 进程托管。Main Agent 是它启动的 Pi 子进程；扩展在 Main Pi 进程内。Build/Test 按阶段依次启动为不同 Pi 子进程，分别只有审核、固定执行请求和读结果工具。它们不直接互发消息，也不共享聊天历史。实际编译、SSH 和板测由固定执行脚本执行，不是模型生成 shell。
 
-主 Pi 与扩展是**同一进程**；workflowd 是独立长驻进程；Luna Worker 是按需创建的子进程。三个 Pi 不保证全程同时存活：一个实验中 build 结束并退出后才会创建 test 子进程。不同实验可以流水线重叠。
+Main Pi 每次真实任务结束会退出；固定 session ID 及 `.workflow/main-agent-session/` 使下一轮新 Pi 进程恢复同一 Main 对话。Build/Test 使用一次性会话。
 
-## 2. 主 Agent 发任务：本地 tool → HTTP JSON
+## 2. Main 如何提交任务
 
-Astra 调用的是注册在自己 Pi 中的工具：
-
-```json
-{
-  "key": "candidate-001",
-  "candidate": ".text\nret\n",
-  "hypothesis": "验证异步通信，不宣称真实性能收益"
-}
-```
-
-工具 `workflow_submit` 自动补充 `profile: "demo"`，向当前 attach 的 workflow 发送：
+Main 的受限扩展工具将一次真实任务提交为：
 
 ```http
-POST /workflows/asm-demo/experiments HTTP/1.1
-Authorization: Bearer <本机令牌>
-x-workflow-owner: <扩展本次连接的随机 ID>
+POST /workflows/authorized-real-run/experiments
+Authorization: Bearer <本机私有令牌>
 Content-Type: application/json
 ```
 
 ```json
-{
-  "key": "candidate-001",
-  "candidate": ".text\nret\n",
-  "hypothesis": "验证异步通信，不宣称真实性能收益",
-  "profile": "demo"
-}
+{"key":"authorized-existing-config-unixbench","profile":"linux-k3-real"}
 ```
 
-服务在返回之前固化候选字节、计算 SHA-256，并提交 SQLite 记录。HTTP 响应状态为 **202**，body 是实验对象；工具只向模型返回摘要，例如：
+Coordinator 写入 SQLite 并立即返回 HTTP `202` 和 experiment ID。它只表示“任务已登记”，不是 Build 已启动，更不是实验成功。幂等 key 防重复提交；真实 one-shot 服务仅允许一个真实实验。
 
-```json
-{
-  "id": "exp-<uuid>",
-  "status": "queued",
-  "sourceHash": "<sha256>",
-  "simulated": true
-}
-```
+Main 先通过工具读取候选快照、必需配置项和 `k3-auto` skills，再记录候选审查意见。Main 扩展不接受模型给出的 shell、镜像路径或任意执行命令。真实执行只能由显式启动 `--execute` 的宿主流程开放。
 
-这只是“已持久化并排队”，不是“已编译”。同一个 `key` 重交相同数据返回同一实验；数据不同则 409。取消当前 Pi 工具调用不等于取消已接收的后台任务。
+## 3. Build/Test 如何派发
 
-HTTP 202 也用于幂等重交，此时对象可能已处于终态，应读取 `status`，不能只看状态码。
+Coordinator 是唯一调度方：一个全局活动 Worker，严格执行 `Build(A) → Test(A)`；不并行其他实验。
 
-## 3. 调度 Worker：Pi RPC over stdin/stdout
+每个阶段由 `AgentWorker` 启动新的 Pi RPC 子进程，通过 stdin/stdout JSONL 发送阶段输入。输入含当前阶段、实验 ID、nonce、固定文件快照/哈希及边界。Pi `prompt accepted` 只表示 prompt 已接收，不表示工作完成。
 
-编排器通过子进程管道通信，不是给 Pi Worker 启动 HTTP 端口，也不连接它们的 TUI。
+Agent 必须先调用 `stage_instructions` 读完本阶段输入，再调用无参数的 `stage_request_execution`。该工具只写请求标记，不执行命令。Coordinator 验证 nonce、experiment ID 和阶段后，才启动固定 Python executor。模型没有 bash、任意路径或命令参数。
 
-### 下行：stdin
+- **Build**：executor 只运行固定 `make Image`，使用既有 `.config`，不 clean/defconfig/install。它记录配置与源码身份，写入 Image、SHA-256、Build ID 和 `result.json`。任一身份检查失败都不会派 Test。
+- **Test**：仅在 Build 产物校验成功后启动 Test Luna，并提供 Image 身份和 `k3-benchmark`、`k3-lab`、`k3-status` 快照。它请求固定 Test executor；后者读取 `k3-auto` 本地配置，检查 board/serial 占用，上传并核对 Image，运行唯一 RUN_ID，采集板端 UnixBench 证据并检查收尾。
 
-一行一个 JSON，末尾 LF：
+Agent 的执行请求回执不是执行成功。Coordinator 要等固定 executor 结束，再验证结构化结果、证据和产物哈希；不使用 Agent 的自然语言“成功”替代机器可判定证据。
 
-```json
-{"id":"job","type":"prompt","message":"你负责 build 阶段。读取指定 candidate.s；在本任务目录写入 artifact.txt 和 result.json；结果必须满足指定 JSON contract。当前仅模拟，不编译、不访问开发板。"}
-```
+## 4. 结果如何回到 Main/User
 
-外层是 Pi RPC 命令，内层 `message` 是阶段委派提示词，包含明确的路径与结果契约；**不是把业务 JSON 直接当成 Pi 协议命令**。
-
-`id: "job"` 在当前实现中可复用，因为每个 Worker 子进程只处理一个业务任务。它不是全局实验 ID。
-
-### 上行：stdout
-
-以下为删减了无关字段的示例：
-
-```json
-{"id":"job","type":"response","command":"prompt","success":true}
-{"type":"tool_execution_start","toolName":"read","toolCallId":"...","args":{"path":".../candidate.s"}}
-{"type":"message_end","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"模拟阶段产物已写入。"}]}}
-{"type":"agent_end","messages":[]}
-{"type":"agent_settled"}
-```
-
-- `response.success: true`：prompt 已接受，不代表模型执行完毕。
-- `tool_execution_*` / 消息事件：进度与诊断，写入阶段 `rpc.jsonl`。
-- `agent_end`：一个底层 agent run 结束；可能还有重试或恢复，**不能用来派发下一阶段**。
-- `agent_settled`：Pi 不会再自动继续。适配器还检查最终 assistant 的 `stopReason`，等待子进程退出，随后 Engine 校验磁盘产物。
-- stderr 单独进入 `stderr.log`，不当作 JSONL 解析。
-
-当前适配器仅用 LF 分帧，保留 JSON 字符串内合法的 Unicode 分隔符；有超时、日志大小上限和取消处理。
-
-## 4. 编译 Agent 如何把结果给测试 Agent
-
-**不直接给测试 Agent 发消息。** 数据由编排器进行可信度检查并交接：
+Coordinator 把 Build/Test 报告放在 `.workflow/real-<timestamp>/runs/<id>/`，更新 SQLite 状态并发布带递增 event ID 的 SSE。真实入口的 Node 宿主订阅 SSE；终态到达后，它向同一个 Main Pi session 发送后续 prompt。Main 再用 `workflow_real_result` 查询实验记录和阶段 Agent 总结，向 User 汇报结果与证据位置。
 
 ```text
-Build Agent 写入 build/artifact.txt + build/result.json
-     ↓
-workflowd 校验 sourceHash、输出格式和实际文件
-     ↓
-workflowd 登记 artifact.path + artifact.sha256
-     ↓
-创建 Test Pi 子进程，将路径和 hash 写进测试 prompt
-     ↓
-Test Agent 读取文件，写 test/result.json
-     ↓
-workflowd 再次检查产物 hash、结果格式和 correctness
+Build/Test result.json + artifacts
+    → Coordinator validation
+    → SQLite terminal status + SSE event
+    → Main host listener
+    → same Main Pi session: workflow_real_result
+    → User-facing summary
 ```
 
-本地文件是数据面；Pi RPC 是任务控制面。并不是在 stdout 中传 ELF/固件，也不是让两个 Worker 互读会话。
+SSE 事件是进度通知；权威结果仍是经 Coordinator 验证的任务记录与阶段证据。HTTP `202`、Agent 的 `stage_request_execution` 回执、Pi 的 `agent_settled`、固定脚本退出码都**不能单独等同实验成功**。
 
-当前 build 结果契约：
+只有以下证据全部齐全才判定 UnixBench 成功：status、exit code、1-copy 与 16-copy 完整成绩、异常扫描、原始结果、板端 Image/config/Build ID 身份及 cleanup。中断、串口冲突或清理状态不明时标记 `needs_attention`，不自动重试。
 
-```json
-{
-  "simulated": true,
-  "kind": "build",
-  "sourceHash": "<candidate.s 的 sha256>",
-  "artifact": "artifact.txt"
-}
-```
+## 5. 默认模式与权限边界
 
-当前 test 结果契约：
+- `demo`：模拟结果，必须带 `simulated: true`；不启动模型、编译或访问板卡。
+- `linux-k3-plan`：真实 Luna 只读规划；不运行计划命令、不连接硬件，结果标记 `mode: "plan-only"`。
+- `linux-k3-real`：独立 one-shot 入口，需明确用户授权；固定构建/板测脚本，模型没有 shell 工具。
 
-```json
-{
-  "simulated": true,
-  "kind": "test",
-  "artifactHash": "<登记产物的 sha256>",
-  "correctness": true,
-  "samples": [100, 101, 99, 100, 100],
-  "unit": "synthetic-cycles"
-}
-```
+HTTP 绑定本机并要求 Bearer token；阶段状态、事件、快照和日志保存在 gitignored 的 `.workflow/`。硬件安全仍不是 OS 安全沙箱；远端锁也不能阻止不遵守锁的其他工具。SSH 断开不能证明板卡下电。
 
-这些固定数字只测试链路，不是 benchmark。未来真实固件、原始测量数据和正确性参考需要另外设计契约，不能直接取消 `simulated` 标记就用于硬件。
-
-## 5. 返回主 Agent：SSE → Pi custom message
-
-扩展 attach 时建立持续连接：
-
-```http
-GET /workflows/asm-demo/events?after=17 HTTP/1.1
-Authorization: Bearer <本机令牌>
-x-workflow-owner: <连接 ID>
-```
-
-服务端返回 `Content-Type: text/event-stream`。SSE 的 `data:` 中是我们的事件 JSON，不是 Pi RPC 命令：
-
-```text
-id: 18
-data: {"id":18,"workflow":"asm-demo","type":"experiment.succeeded","experimentId":"exp-<uuid>","data":{"status":"succeeded","stage":"test","result":{"simulated":true,"correctness":true,"samples":[100,101,99],"unit":"synthetic-cycles"}}}
-
-```
-
-扩展收到一般进度时只更新状态栏，收到实验终态才调用：
-
-```typescript
-pi.sendMessage(
-  {
-    customType: "k3-workflow-result",
-    display: true,
-    content: "经过校验的实验结果摘要……",
-    details: { eventId: 18, workflow: "asm-demo" },
-  },
-  { deliverAs: "followUp", triggerTurn: auto && !paused },
-);
-```
-
-- **auto OFF**：结果进入会话，空闲时不额外调用模型。
-- **auto ON**：空闲时触发模型分析；忙碌时排在当前任务之后，不用 steer 抢占。
-- Pi runtime 发出结果 custom message 的 `message_end` 后，扩展才确认持久化投递游标；这不是又让 Astra 回一句“收到”。
-- SSE 断线从事件 ID 补收；极端崩溃仍可能重放，实验提交依靠 `key` 幂等。
-
-查询详细结果使用 `workflow_result` → HTTP GET，不强迫模型拿状态轮询。进度的服务端轮询发生在后台程序中，不消耗模型推理轮次。
-
-## 6. 四类身份不能混用
-
-| 标识 | 范围 | 作用 |
-|---|---|---|
-| `key` | 一个 workflow 内 | 重复提交去重；同 key 不允许改变候选 |
-| `exp-<uuid>` | 实验 | 贯穿 build、test、文件目录、事件和结果查询 |
-| RPC `id: "job"` | 单个 Worker 的管道 | 关联 prompt 请求与接受响应；Pi 事件一般不带它 |
-| SSE `id` | 数据库事件流 | 重放与投递确认；同一 workflow 内可能有数字间隙 |
-
-阶段由 `stage: build|test` 区分，当前实现没有额外的全局 build_task_id/test_task_id API。
-
-## 7. 失败、暂停和重启时怎样协作
-
-| 情况 | 编排器的行为 | 主 Agent 如何得知 |
-|---|---|---|
-| build 出错或产物校验失败 | 不启动 test；记录 failed | SSE `experiment.failed` |
-| test 指标/产物身份/正确性失败 | 记录 failed，不当作优化成功 | SSE `experiment.failed` |
-| 用户取消 | 等 Worker 停止后释放槽位 | SSE `experiment.cancelled` |
-| pause | 不再派发新阶段，当前任务继续 | 状态栏/查询；扩展关闭 auto |
-| 服务异常重启发现 running | 转 needs_attention，不自动重放副作用 | 重连后补收对应终态事件 |
-| 主 Pi 关闭或 detach | 后台任务照常运行 | 再次 attach 后补收 |
-
-图中成功路径不是绝对的事件时序保证：Pi 很快时，prompt 接受响应与部分事件可能交错；适配器等待“接受响应 + settled”两个条件，而不是依赖相邻消息顺序。不同实验的事件也可能交错，用实验 ID 区分。
-
-## 8. k3-auto 在哪里接入（真实执行未实现）
-
-将来应在 **测试 Worker 的受控工具/skill 层**接入 `integrations/k3-auto`，不是替换主控 SSE，也不是让开发板直接跟 Astra 聊天。
-
-skill 本质上是给 Agent 的操作说明/资源，不是传输协议；其工具或脚本才可能通过 SSH、串口等连接开发板。具体板测协议、部署命令和授权范围尚未接线验证。
-
-原 demo RPC Worker 带 `--no-skills`，只开放 `read,write`，不会自动加载 submodule。新增 plan-only Worker 则只开放受限 read，并通过显式 `--skill` 注册三个 skill 快照，已验证只读规划交接；它不执行 skill 脚本。正式启用硬件前还需增加受控工具、设备独占租约、刷写安全边界、恢复流程及真实结果契约。
-
-## 源码导航
-
-| 源码 | 对应职责 |
-|---|---|
-| `extension/index.ts` | 模型工具参数 schema |
-| `extension/workflow.ts` | tools、attach、SSE 到 Pi 消息、投递确认 |
-| `src/client.ts` | HTTP 请求与 SSE 分帧/重连 |
-| `src/server.ts` | 认证、HTTP 路由、SSE 发布 |
-| `src/engine.ts` | build→test 状态机和产物校验 |
-| `src/rpc-worker.ts` | Pi 子进程 JSONL 适配器 |
-| `src/store.ts` | SQLite 任务与事件持久化 |
+状态机、HTTP 路由和失败处理见[设计说明](design.md)；本轮真实证据摘要见[实验记录](experiments/linux-k3-csrrsi-fast-real.md)。

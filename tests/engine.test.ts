@@ -55,32 +55,67 @@ test("pause blocks dispatch; resume continues; queued cancellation is terminal",
   engine.pause("asm", true);
   const exp = engine.submit("asm", request());
   engine.tick();
-  assert.equal(engine.active.size, 0);
+  assert.equal(engine.active, undefined);
   assert.equal(engine.cancel("asm", exp.id).status, "cancelled");
   const next = engine.submit("asm", request("next"));
   engine.pause("asm", false); engine.start();
   await until(() => terminal(engine.store.get(next.id)!.status));
   assert.equal(engine.store.get(next.id)!.status, "succeeded");
 });
-test("running cancellation waits for the worker to stop before releasing slot", async t => {
-  const engine = await setup(t, new DemoWorker(1000));
-  const exp = engine.submit("asm", request()); engine.tick();
-  assert.equal(engine.active.size, 1);
-  engine.cancel("asm", exp.id);
-  await until(() => engine.active.size === 0);
+test("running cancellation holds the only slot until worker cleanup completes", async t => {
+  const gate = Promise.withResolvers<void>(), demo = new DemoWorker(1);
+  const engine = await setup(t, { async run(job) {
+    if (job.experiment.request.key === "slow") await gate.promise;
+    await demo.run(job);
+  } });
+  cleanup(t, () => gate.resolve());
+  const exp = engine.submit("asm", request("slow")); engine.tick();
+  const next = engine.submit("other", request("next"));
+  engine.cancel("asm", exp.id); engine.tick();
+  assert.equal(engine.active?.id, exp.id);
+  assert.equal(engine.store.get(next.id)!.status, "queued");
+  gate.resolve();
+  await until(() => !engine.active);
   assert.equal(engine.store.get(exp.id)!.status, "cancelled");
+  engine.start();
+  await until(() => terminal(engine.store.get(next.id)!.status));
+  assert.equal(engine.store.get(next.id)!.status, "succeeded");
 });
-test("one worker per stage; test resource is exclusive across workflows", async t => {
-  const counts = { build: 0, test: 0 }, maxima = { build: 0, test: 0 };
-  const demo = new DemoWorker(30);
+test("one global worker runs each experiment build then test, without stage overlap", async t => {
+  let count = 0, maximum = 0;
+  const order: string[] = [], demo = new DemoWorker(30);
   const engine = await setup(t, { async run(job: Job) {
-    maxima[job.stage] = Math.max(maxima[job.stage], ++counts[job.stage]);
-    try { await demo.run(job); } finally { counts[job.stage]--; }
+    maximum = Math.max(maximum, ++count);
+    order.push(`${job.experiment.workflow}:${job.stage}`);
+    try { await demo.run(job); } finally { count--; }
   } });
   const ids = ["a", "b", "c"].map(w => engine.submit(w, request()).id);
   engine.start();
   await until(() => ids.every(id => terminal(engine.store.get(id)!.status)));
-  assert.deepEqual(maxima, { build: 1, test: 1 });
+  assert.equal(maximum, 1);
+  assert.deepEqual(order, ["a:build", "a:test", "b:build", "b:test", "c:build", "c:test"]);
+  assert.ok(ids.every(id => engine.store.get(id)!.status === "succeeded"));
+});
+test("a paused test yields the slot; failed build does not block subsequent work", async t => {
+  const order: string[] = [], demo = new DemoWorker(1);
+  const engine = await setup(t, { async run(job) {
+    order.push(`${job.experiment.workflow}:${job.stage}`);
+    if (job.experiment.workflow === "bad") throw new Error("Expected build failure");
+    await demo.run(job);
+  } });
+  const first = engine.submit("first", request());
+  const bad = engine.submit("bad", request());
+  const last = engine.submit("last", request());
+  engine.tick();
+  await until(() => !engine.active);
+  assert.equal(engine.store.get(first.id)!.stage, "test");
+  engine.pause("first", true); engine.start();
+  await until(() => terminal(engine.store.get(last.id)!.status));
+  assert.equal(engine.store.get(first.id)!.status, "queued");
+  assert.equal(engine.store.get(bad.id)!.status, "failed");
+  engine.pause("first", false);
+  await until(() => terminal(engine.store.get(first.id)!.status));
+  assert.deepEqual(order, ["first:build", "bad:build", "last:build", "last:test", "first:test"]);
 });
 test("bad result contracts and failed correctness do not become successes", async t => {
   const demo = new DemoWorker(1);

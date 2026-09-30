@@ -3,6 +3,9 @@ node_modules/
 coverage/
 *.log
 .env
+.env.*
+!.env.example
+!.env.sample
 planning.local.json
 __pycache__/
 output/**/*.svg

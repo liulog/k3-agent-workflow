@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, lstatSync, realpathSync } from 
 import { join, resolve, sep } from "node:path";
 import { Store } from "./store.ts";
 import { ApiError, terminal, validateSubmit, workflowName } from "./types.ts";
-import type { Experiment, Stage, Worker, PlanningOptions } from "./types.ts";
+import type { Experiment, Stage, Worker, PlanningOptions, ExecutionOptions } from "./types.ts";
 import { snapshotPlanning, verifyPlanning, validatePlan, validateEvidence } from "./planning.ts";
 
 export const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
@@ -12,21 +12,23 @@ export class Engine {
   root: string;
   workers: Record<Stage, Worker>;
   planningOptions?: PlanningOptions;
-  active = new Map<Stage, { id: string; controller: AbortController; promise: Promise<void> }>();
+  executionOptions?: ExecutionOptions;
+  active?: { id: string; controller: AbortController; promise: Promise<void> };
   stopping = false;
   timer?: ReturnType<typeof setInterval>;
-  constructor(root: string, workers: Record<Stage, Worker>, planningOptions?: PlanningOptions) {
+  constructor(root: string, workers: Record<Stage, Worker>, planningOptions?: PlanningOptions, executionOptions?: ExecutionOptions) {
     this.root = resolve(root);
     mkdirSync(this.root, { recursive: true, mode: 0o700 });
     this.workers = workers;
     this.planningOptions = planningOptions;
+    this.executionOptions = executionOptions;
     this.store = new Store(join(this.root, "state.sqlite"));
     // Never blindly replay jobs whose side effects may have started before a crash.
     this.store.transaction(() => {
       for (const exp of this.store.all()) {
-        if (exp.status === "running") {
+        if (exp.status === "running" || (exp.request.profile === "linux-k3-real" && exp.status === "queued")) {
           exp.status = "needs_attention";
-          exp.error = "Daemon restarted during execution; not automatically retried";
+          exp.error = "Daemon restarted; interrupted/real work is not automatically retried";
           this.change(exp, "experiment.needs_attention");
         }
       }
@@ -43,6 +45,7 @@ export class Engine {
         return duplicate;
       }
       if (request.profile === "linux-k3-plan" && !this.planningOptions) throw new ApiError(409, "linux-k3-plan is not configured; start serve with --plan-config");
+      if (request.profile === "linux-k3-real" && (!this.executionOptions || this.store.all().some(e => e.request.profile === "linux-k3-real"))) throw new ApiError(409, "Real execution requires an explicitly authorized one-shot server; only one real experiment is allowed");
       const info = this.store.info(workflow);
       if (this.store.all(workflow).length >= info.budget) throw new ApiError(409, "Experiment budget exhausted (5 per workflow)");
       const id = `exp-${randomUUID()}`;
@@ -92,9 +95,9 @@ export class Engine {
   cancel(workflow: string, id: string) {
     const exp = this.get(workflow, id);
     if (terminal(exp.status)) return exp;
-    const active = [...this.active.values()].find(job => job.id === id);
-    if (active) {
-      active.controller.abort(new Error("Cancellation requested"));
+    if (this.active?.id === id) {
+      if (exp.request.profile === "linux-k3-real" && exp.stage === "test") throw new ApiError(409, "Hardware stage cannot be cancelled by killing local processes; inspect and stop the owned remote runner explicitly");
+      this.active.controller.abort(new Error("Cancellation requested"));
       return { ...exp, cancellationRequested: true };
     }
     exp.status = "cancelled";
@@ -102,27 +105,25 @@ export class Engine {
     return exp;
   }
   tick() {
-    if (this.stopping) return;
-    for (const stage of ["build", "test"] as const) {
-      if (this.active.has(stage)) continue;
-      const exp = this.store.all().find(e => e.status === "queued" && e.stage === stage && !this.store.info(e.workflow).paused);
-      if (exp?.request.profile === "linux-k3-plan" && !this.planningOptions) {
-        exp.status = "needs_attention"; exp.error = "Planning workers are not configured after restart";
-        this.store.transaction(() => this.change(exp, "experiment.needs_attention"));
-        continue;
-      }
-      if (!exp) continue;
-      exp.status = "running";
-      this.store.transaction(() => this.change(exp, `${stage}.started`));
-      const controller = new AbortController();
-      const promise = this.execute(exp, controller.signal).finally(() => this.active.delete(stage));
-      this.active.set(stage, { id: exp.id, controller, promise });
+    if (this.stopping || this.active) return;
+    // FIFO by experiment: its queued Test stays ahead of later Builds unless paused.
+    const exp = this.store.all().find(e => e.status === "queued" && !this.store.info(e.workflow).paused);
+    if (!exp) return;
+    if (exp.request.profile === "linux-k3-plan" && !this.planningOptions) {
+      exp.status = "needs_attention"; exp.error = "Planning workers are not configured after restart";
+      this.store.transaction(() => this.change(exp, "experiment.needs_attention"));
+      return;
     }
+    exp.status = "running";
+    this.store.transaction(() => this.change(exp, `${exp.stage}.started`));
+    const controller = new AbortController();
+    const promise = this.execute(exp, controller.signal).finally(() => { this.active = undefined; });
+    this.active = { id: exp.id, controller, promise };
   }
-  private checkedFile(directory: string, name: string): Buffer {
+  private checkedFile(directory: string, name: string, maxBytes = 1024 * 1024): Buffer {
     const path = join(directory, name);
     const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes
       || !realpathSync(path).startsWith(realpathSync(directory) + sep)) throw new Error(`Invalid output file: ${name}`);
     return readFileSync(path);
   }
@@ -131,7 +132,8 @@ export class Engine {
     if (exp.request.profile === "linux-k3-plan") verifyPlanning(exp);
   }
   private verifyArtifact(exp: Experiment) {
-    if (!exp.artifact || hash(this.checkedFile(join(exp.directory, "build"), exp.request.profile === "demo" ? "artifact.txt" : "result.json")) !== exp.artifact.sha256) throw new Error("Artifact hash mismatch");
+    const name = exp.request.profile === "demo" ? "artifact.txt" : exp.request.profile === "linux-k3-real" ? "Image" : "result.json";
+    if (!exp.artifact || hash(this.checkedFile(join(exp.directory, "build"), name, name === "Image" ? 512 * 1024 * 1024 : 1024 * 1024)) !== exp.artifact.sha256) throw new Error("Artifact hash mismatch");
   }
   private async execute(exp: Experiment, signal: AbortSignal) {
     const stage = exp.stage;
@@ -140,49 +142,55 @@ export class Engine {
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       this.verifySource(exp);
       if (stage === "test") this.verifyArtifact(exp);
-      const workers = exp.request.profile === "linux-k3-plan" ? this.planningOptions!.workers : this.workers;
+      const workers = exp.request.profile === "linux-k3-real" ? this.executionOptions!.workers : exp.request.profile === "linux-k3-plan" ? this.planningOptions!.workers : this.workers;
       await workers[stage].run({ experiment: exp, stage, directory, signal });
       signal.throwIfAborted();
       this.verifySource(exp);
-      const result = JSON.parse(this.checkedFile(directory, "result.json").toString());
-      if (exp.request.profile === "linux-k3-plan") {
+      if (stage === "test") this.verifyArtifact(exp);
+      const resultBytes = this.checkedFile(directory, "result.json");
+      const result = JSON.parse(resultBytes.toString());
+      if (exp.request.profile === "linux-k3-real") {
+        if (result.mode !== "real" || result.simulated !== false || result.kind !== stage || result.experimentId !== exp.id || result.sourceHash !== exp.sourceHash) throw new Error("Invalid real execution identity");
+        if (stage === "build") {
+          const sha256 = hash(this.checkedFile(directory, "Image", 512 * 1024 * 1024));
+          if (result.artifactHash !== sha256 || result.buildExecuted !== true || result.configUnchanged !== true || result.sourceUnchanged !== true) throw new Error("Real build identity/configuration check failed");
+          exp.artifact = { path: join(directory, "Image"), sha256 };
+        } else {
+          const required = ["status", "exitCode", "scores", "anomalies", "rawResults", "imageIdentity", "cleanup"];
+          if (result.artifactHash !== exp.artifact!.sha256 || result.benchmark !== "unixbench" || result.boardAccessed !== true || !required.every(k => result.checks?.[k] === true)) throw new Error("Incomplete or failed real benchmark evidence");
+          exp.result = { mode: "real", simulated: false, buildExecuted: true, boardAccessed: true, benchmark: "unixbench", artifactHash: exp.artifact!.sha256, evidence: join(directory, "result.json"), checks: result.checks };
+        }
+      } else if (exp.request.profile === "linux-k3-plan") {
         const report = validatePlan(result, exp, stage);
         validateEvidence(JSON.parse(this.checkedFile(directory, "read-evidence.json").toString()), { experiment: exp, stage, directory, signal });
         if (stage === "build") {
-          exp.artifact = { path: join(directory, "result.json"), sha256: hash(this.checkedFile(directory, "result.json")) };
-          exp.stage = "test"; exp.status = "queued";
-          this.store.transaction(() => this.change(exp, "build.succeeded"));
+          exp.artifact = { path: join(directory, "result.json"), sha256: hash(resultBytes) };
         } else {
-          this.verifyArtifact(exp);
           const build = JSON.parse(this.checkedFile(join(exp.directory, "build"), "result.json").toString());
           exp.result = { mode: "plan-only", planningCompleted: true, buildExecuted: false, boardAccessed: false,
             ...(build.simulated === true || report.simulated === true ? { simulated: true as const } : {}),
-            buildPlan: exp.artifact!, testPlan: { path: join(directory, "result.json"), sha256: hash(this.checkedFile(directory, "result.json")) },
+            buildPlan: exp.artifact!, testPlan: { path: join(directory, "result.json"), sha256: hash(resultBytes) },
             summary: report.summary, blockers: [...new Set([...build.blockers, ...report.blockers])] };
-          exp.status = "succeeded";
-          this.store.transaction(() => this.change(exp, "experiment.succeeded"));
         }
-        return;
-      }
-      if (result.simulated !== true || result.kind !== stage) throw new Error("Invalid result: must explicitly be a simulated stage result");
-      if (stage === "build") {
-        if (result.sourceHash !== exp.sourceHash || result.artifact !== "artifact.txt") throw new Error("Build result identity mismatch");
-        exp.artifact = { path: join(directory, "artifact.txt"), sha256: hash(this.checkedFile(directory, "artifact.txt")) };
-        exp.stage = "test";
-        exp.status = "queued";
-        this.store.transaction(() => this.change(exp, "build.succeeded"));
       } else {
-        this.verifyArtifact(exp);
-        if (result.artifactHash !== exp.artifact!.sha256 || typeof result.correctness !== "boolean" || result.unit !== "synthetic-cycles"
-          || !Array.isArray(result.samples) || result.samples.length < 3 || result.samples.length > 10000
-          || !result.samples.every((x: unknown) => typeof x === "number" && Number.isFinite(x) && x > 0)) throw new Error("Invalid test metrics or artifact identity");
-        exp.result = { simulated: true, correctness: result.correctness, samples: result.samples, unit: result.unit };
-        if (!result.correctness) throw new Error("Simulated correctness check failed");
-        exp.status = "succeeded";
-        this.store.transaction(() => this.change(exp, "experiment.succeeded"));
+        if (result.simulated !== true || result.kind !== stage) throw new Error("Invalid result: must explicitly be a simulated stage result");
+        if (stage === "build") {
+          if (result.sourceHash !== exp.sourceHash || result.artifact !== "artifact.txt") throw new Error("Build result identity mismatch");
+          exp.artifact = { path: join(directory, "artifact.txt"), sha256: hash(this.checkedFile(directory, "artifact.txt")) };
+        } else {
+          if (result.artifactHash !== exp.artifact!.sha256 || typeof result.correctness !== "boolean" || result.unit !== "synthetic-cycles"
+            || !Array.isArray(result.samples) || result.samples.length < 3 || result.samples.length > 10000
+            || !result.samples.every((x: unknown) => typeof x === "number" && Number.isFinite(x) && x > 0)) throw new Error("Invalid test metrics or artifact identity");
+          exp.result = { simulated: true, correctness: result.correctness, samples: result.samples, unit: result.unit };
+          if (!result.correctness) throw new Error("Simulated correctness check failed");
+        }
       }
+      // Both profiles share the same two-stage state machine; only result contracts differ.
+      exp.stage = "test";
+      exp.status = stage === "build" ? "queued" : "succeeded";
+      this.store.transaction(() => this.change(exp, stage === "build" ? "build.succeeded" : "experiment.succeeded"));
     } catch (error) {
-      exp.status = signal.aborted ? "cancelled" : "failed";
+      exp.status = exp.request.profile === "linux-k3-real" && stage === "test" ? "needs_attention" : signal.aborted ? "cancelled" : "failed";
       exp.error = String(error);
       this.store.transaction(() => this.change(exp, `experiment.${exp.status}`));
     }
@@ -190,8 +198,11 @@ export class Engine {
   async close() {
     this.stopping = true;
     clearInterval(this.timer);
-    for (const active of this.active.values()) active.controller.abort(new Error("Daemon shutting down (non-executing task cancellation)"));
-    await Promise.all([...this.active.values()].map(a => a.promise));
+    const active = this.active;
+    const current = active && this.store.get(active.id);
+    // A local abort cannot establish remote board safety. Wait for the owned test.
+    if (!(current?.request.profile === "linux-k3-real" && current.stage === "test")) active?.controller.abort(new Error("Daemon shutting down"));
+    await active?.promise;
     this.store.close();
   }
 }

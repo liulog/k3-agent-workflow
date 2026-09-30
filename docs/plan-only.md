@@ -13,6 +13,8 @@
   → SSE 完成通知 → 主会话查看两份计划与 blockers
 ```
 
+调度采用全局一个活动 Worker：Build 完成并退出后才启动 Test，不与其他实验的 Worker 并行；暂停的 workflow 跳过。通信和工具接口不变。
+
 这里的“build succeeded / experiment succeeded”表示对应**规划阶段完成**，不表示真正运行了编译或测试。返回值明确包含：
 
 ```json

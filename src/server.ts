@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { Engine } from "./engine.ts";
 import { DemoWorker } from "./demo-worker.ts";
 import { ApiError, workflowName } from "./types.ts";
-import type { Stage, Worker, PlanningOptions } from "./types.ts";
+import type { Stage, Worker, PlanningOptions, ExecutionOptions } from "./types.ts";
 
 async function body(req: IncomingMessage): Promise<unknown> {
   req.setEncoding("utf8");
@@ -28,12 +28,12 @@ function lock(root: string): () => void {
   catch { throw new Error(`State directory is locked: ${path}. Check the recorded process before removing a stale lock.`); }
   return () => unlinkSync(path);
 }
-export async function startServer(options: { root: string; port?: number; token?: string; workers?: Record<Stage, Worker>; planning?: PlanningOptions }) {
+export async function startServer(options: { root: string; port?: number; token?: string; workers?: Record<Stage, Worker>; planning?: PlanningOptions; execution?: ExecutionOptions }) {
   const root = resolve(options.root);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const unlock = lock(root);
   let engine: Engine;
-  try { engine = new Engine(root, options.workers ?? { build: new DemoWorker(), test: new DemoWorker() }, options.planning); }
+  try { engine = new Engine(root, options.workers ?? { build: new DemoWorker(), test: new DemoWorker() }, options.planning, options.execution); }
   catch (error) { unlock(); throw error; }
   let token = options.token;
   if (!token) {
@@ -55,7 +55,7 @@ export async function startServer(options: { root: string; port?: number; token?
       const auth = Buffer.from(req.headers.authorization ?? "");
       if (auth.length !== secret.length || !timingSafeEqual(auth, secret)) throw new ApiError(401, "Unauthorized");
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url.pathname === "/health" && req.method === "GET") return json(res, 200, { ok: true, mode: options.planning ? "simulation-and-plan-only" : "simulation-only", profiles: options.planning ? ["demo", "linux-k3-plan"] : ["demo"], executionEnabled: false });
+      if (url.pathname === "/health" && req.method === "GET") return json(res, 200, { ok: true, mode: options.execution ? "authorized-real-one-shot" : options.planning ? "simulation-and-plan-only" : "simulation-only", profiles: ["demo", ...(options.planning ? ["linux-k3-plan"] : []), ...(options.execution ? ["linux-k3-real"] : [])], executionEnabled: !!options.execution });
       const parts = url.pathname.split("/").filter(Boolean);
       if (parts[0] !== "workflows" || parts.length < 2 || parts.length > 4) throw new ApiError(404, "Unknown route");
       const workflow = workflowName(parts[1]);

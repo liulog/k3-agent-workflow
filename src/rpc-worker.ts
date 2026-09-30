@@ -3,6 +3,15 @@ import { createWriteStream } from "node:fs";
 import { join } from "node:path";
 import type { Job, Worker } from "./types.ts";
 
+// Used by the one-shot main Agent: agent_settled alone is not model success.
+export function completedAssistantText(events: any[]): string {
+  const message = events.filter(e => e.type === "message_end" && e.message?.role === "assistant").at(-1)?.message;
+  if (message?.stopReason !== "stop") throw new Error(`Main Agent failed: ${message?.errorMessage ?? message?.stopReason ?? "missing assistant message"}`);
+  const text = (message.content ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text).join("");
+  if (!text.trim()) throw new Error("Main Agent returned no final text");
+  return text;
+}
+
 export type RpcOptions = { command: string; args: string[]; timeoutMs?: number; env?: NodeJS.ProcessEnv };
 // Small dependency-free implementation of Pi's documented JSONL protocol.
 // Each task gets a new Pi process/context. No shared transcript or implicit tools.

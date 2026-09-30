@@ -39,6 +39,6 @@ test("RPC cancellation terminates the child", async t => {
   cleanup(t, () => engine.close());
   const exp = engine.submit("rpc", request()); engine.tick();
   engine.cancel("rpc", exp.id);
-  await until(() => !engine.active.size);
+  await until(() => !engine.active);
   assert.equal(engine.store.get(exp.id)!.status, "cancelled");
 });

@@ -2,7 +2,9 @@ export type Stage = "build" | "test";
 export type Status = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "needs_attention";
 export type DemoSubmit = { key: string; candidate: string; hypothesis: string; profile: "demo" };
 export type PlanSubmit = { key: string; task: string; benchmark: "unixbench" | "lmbench"; profile: "linux-k3-plan" };
-export type Submit = DemoSubmit | PlanSubmit;
+export type RealSubmit = { key: string; profile: "linux-k3-real" };
+export type Submit = DemoSubmit | PlanSubmit | RealSubmit;
+export type RealResult = { mode: "real"; simulated: false; buildExecuted: true; boardAccessed: true; benchmark: "unixbench"; artifactHash: string; evidence: string; checks: Record<string, boolean> };
 export type SnapshotFile = { path: string; sha256: string; origin: string };
 export type PlanningContext = {
   linuxRepo: string; k3Root: string; files: SnapshotFile[];
@@ -26,11 +28,12 @@ export type Experiment = {
   status: Status; stage: Stage; createdAt: string; error?: string;
   planning?: PlanningContext;
   artifact?: { path: string; sha256: string };
-  result?: { simulated: true; correctness: boolean; samples: number[]; unit: "synthetic-cycles" } | PlanResult;
+  result?: { simulated: true; correctness: boolean; samples: number[]; unit: "synthetic-cycles" } | PlanResult | RealResult;
 };
 export type WorkflowEvent = { id: number; workflow: string; type: string; experimentId?: string; data: unknown };
 export type Job = { experiment: Experiment; stage: Stage; directory: string; signal: AbortSignal };
 export interface Worker { run(job: Job): Promise<void> }
+export type ExecutionOptions = { workers: Record<Stage, Worker> };
 export type PlanningOptions = { linuxRepo: string; k3Root: string; workers: Record<Stage, Worker> };
 export class ApiError extends Error {
   status: number;
@@ -44,6 +47,7 @@ export function workflowName(value: unknown): string {
 export function validateSubmit(value: unknown): Submit {
   const v = value as any;
   if (!v || typeof v.key !== "string" || !/^[\w.-]{1,100}$/.test(v.key)) throw new ApiError(400, "Invalid idempotency key");
+  if (v.profile === "linux-k3-real") return { key: v.key, profile: "linux-k3-real" };
   if (v.profile === "linux-k3-plan") {
     if (typeof v.task !== "string" || !v.task.trim() || Buffer.byteLength(v.task) > 8000
       || !["unixbench", "lmbench"].includes(v.benchmark)) throw new ApiError(400, "Expected task (1..8000 bytes) and benchmark: unixbench|lmbench");
