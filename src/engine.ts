@@ -7,6 +7,7 @@ import type { Experiment, Stage, Worker, PlanningOptions, ExecutionOptions } fro
 import { snapshotPlanning, verifyPlanning, validatePlan, validateEvidence } from "./planning.ts";
 
 export const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+export const SCHEDULER_POLL_INTERVAL_MS = 10_000;
 export class Engine {
   store: Store;
   root: string;
@@ -34,11 +35,18 @@ export class Engine {
       }
     });
   }
-  start() { if (!this.timer) this.timer = setInterval(() => this.tick(), 25); }
+  start() {
+    if (this.timer) return;
+    this.timer = setInterval(() => { if (!this.active) this.tick(); }, SCHEDULER_POLL_INTERVAL_MS);
+    this.tick();
+  }
+  private wake() {
+    if (this.timer && !this.stopping) queueMicrotask(() => this.tick());
+  }
   submit(workflow: string, input: unknown): Experiment {
     workflowName(workflow);
     const request = validateSubmit(input);
-    return this.store.transaction(() => {
+    const exp = this.store.transaction(() => {
       const duplicate = this.store.all(workflow).find(exp => exp.request.key === request.key);
       if (duplicate) {
         if (JSON.stringify(duplicate.request) !== JSON.stringify(request)) throw new ApiError(409, "Idempotency key reused with different input");
@@ -61,6 +69,8 @@ export class Engine {
       this.change(exp, "experiment.queued");
       return exp;
     });
+    this.wake();
+    return exp;
   }
   change(exp: Experiment, type: string) {
     this.store.save(exp);
@@ -91,6 +101,7 @@ export class Engine {
       this.store.pause(workflow, paused);
       this.store.event(workflow, paused ? "workflow.paused" : "workflow.resumed", { paused });
     });
+    if (!paused) this.wake();
   }
   cancel(workflow: string, id: string) {
     const exp = this.get(workflow, id);
@@ -102,6 +113,7 @@ export class Engine {
     }
     exp.status = "cancelled";
     this.store.transaction(() => this.change(exp, "experiment.cancelled"));
+    this.wake();
     return exp;
   }
   tick() {
@@ -112,12 +124,13 @@ export class Engine {
     if (exp.request.profile === "linux-k3-plan" && !this.planningOptions) {
       exp.status = "needs_attention"; exp.error = "Planning workers are not configured after restart";
       this.store.transaction(() => this.change(exp, "experiment.needs_attention"));
+      this.wake();
       return;
     }
     exp.status = "running";
     this.store.transaction(() => this.change(exp, `${exp.stage}.started`));
     const controller = new AbortController();
-    const promise = this.execute(exp, controller.signal).finally(() => { this.active = undefined; });
+    const promise = this.execute(exp, controller.signal).finally(() => { this.active = undefined; this.wake(); });
     this.active = { id: exp.id, controller, promise };
   }
   private checkedFile(directory: string, name: string, maxBytes = 1024 * 1024): Buffer {
@@ -156,7 +169,7 @@ export class Engine {
           if (result.artifactHash !== sha256 || result.buildExecuted !== true || result.configUnchanged !== true || result.sourceUnchanged !== true) throw new Error("Real build identity/configuration check failed");
           exp.artifact = { path: join(directory, "Image"), sha256 };
         } else {
-          const required = ["status", "exitCode", "scores", "anomalies", "rawResults", "imageIdentity", "cleanup"];
+          const required = ["status", "exitCode", "scores", "anomalies", "rawResults", "imageIdentity", "cleanup", "frequencyLocked", "frequencyHeld", "frequencyRestored"];
           if (result.artifactHash !== exp.artifact!.sha256 || result.benchmark !== "unixbench" || result.boardAccessed !== true || !required.every(k => result.checks?.[k] === true)) throw new Error("Incomplete or failed real benchmark evidence");
           exp.result = { mode: "real", simulated: false, buildExecuted: true, boardAccessed: true, benchmark: "unixbench", artifactHash: exp.artifact!.sha256, evidence: join(directory, "result.json"), checks: result.checks };
         }

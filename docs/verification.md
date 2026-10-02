@@ -80,3 +80,13 @@ PPTX 导出因本机缺少 `python-pptx` 未执行；没有为此安装依赖。
 - 1-copy 571.6、16-copy 3594.9；status、exitCode、scores、anomalies、rawResults、imageIdentity、cleanup 七项门禁全部通过。
 - 没有性能对照，不据此宣称性能提升。完整摘要和本机证据路径见[实验报告](experiments/linux-k3-csrrsi-fast-real.md)；原始日志、Image 和证据不提交。
 - 此实验使用临时 Main RPC 会话。后续真实入口改为复用 `.workflow/main-agent-session/` 下的持久 Pi session；该持久化改动通过离线测试与无模型 Pi session smoke 验证，尚未在下一轮真实 workflow 中运行验证。
+
+## 锁频、重启检测与有界通信恢复（2026-10-02）
+
+- `node --test tests/*.test.ts`：77 项通过，覆盖频率门禁、角色运行时、事件驱动唤醒、10 秒空闲/SSE 兜底等当前累积修订。
+- `python3 tests/real_contracts.py`：板端 sysfs/SSH 夹具验证 per-policy 向量、恢复、脱敏结构，以及 online=0–15 而进程允许 CPU=0–7 的环境记录。
+- `python3 tests/reboot_guard.py`：新增 U-Boot、boot ID 变化、owned SIGTERM 与不影响其他 RUN_ID 的回归通过。
+- `python3 tests/reliability.py`：19 项 mock 回归通过，包括默认关闭、一次预算持久化、网络等待不消耗预算、恢复前资源/租约校验、未知电源结果不反复重置、独立新 RUN_ID/失败留证，以及活动 dispatcher 不干预/不改写状态。
+- Python AST 语法与 `git diff --check` 通过。本轮没有安装、构建、请求模型、执行真实 k3ctl/SSH/板卡电源；不重启正在跑的矩阵。
+- 实际历史矩阵已有完整三轮证据及一次 SIP 复测，但新统一重试模块的验收属于离线 mock，不能把历史运行当作这一版本的完整故障注入验证。历史 normal 构建种子不一致仍保留为实验限制，没有重建/覆写数据。
+- 权限、入口、次数上限及未覆盖项见[可靠性与重试](reliability.md)。

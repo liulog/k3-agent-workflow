@@ -15,6 +15,12 @@ import subprocess
 import sys
 
 
+# The observed UnixBench run takes about 57 minutes. Avoid the previous
+# minute-by-minute runner checks during the load; this delays anomaly detection
+# and runner-managed shutdown by up to one monitor interval if a run hangs.
+UNIXBENCH_MONITOR_SECONDS = 80 * 60
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -98,7 +104,7 @@ def build(spec):
     print('BUILD VERIFIED:', report['artifactHash'], flush=True)
 
 
-def judge_evidence(item, evidence, build_report, cleanup):
+def judge_evidence(item, evidence, build_report, cleanup, frequency):
     stdout = evidence.get('stdout', '')
     # A complete default run must contain both 1-copy and 16-copy score tables.
     blocks = re.split(r'running\s+(\d+)\s+parallel\s+cop(?:y|ies)\s+of\s+tests', stdout, flags=re.I)
@@ -112,6 +118,8 @@ def judge_evidence(item, evidence, build_report, cleanup):
         if score and all(label in blocks[i + 1] for label in labels):
             scores[blocks[i]] = float(score.group(1))
     anomalies = evidence.get('anomaly', '')
+    frequency_lock = frequency.get('lock') or {}
+    frequency_restore = frequency.get('restore') or {}
     bad = r'Kernel panic|Oops|Unable to handle kernel|BUG:|WARNING:|page fault|access fault|RCU stall|hung task|stack smashing detected'
     return {'status': item.get('status') == 'complete' and evidence.get('status', '').strip() == 'success',
             'exitCode': item.get('exit_rc') == 0 and evidence.get('exitCode', '').strip() == '0',
@@ -119,7 +127,10 @@ def judge_evidence(item, evidence, build_report, cleanup):
             'anomalies': 'anomaly' in evidence and not item.get('anomalies') and not re.search(bad, anomalies),
             'rawResults': bool(evidence.get('raw')) and all(evidence['raw'].values()),
             'imageIdentity': evidence.get('configHash') == build_report['configHash'] and evidence.get('buildId') == build_report['buildId'] and evidence.get('release') == build_report['kernelRelease'],
-            'cleanup': cleanup}, scores
+            'cleanup': cleanup,
+            'frequencyLocked': frequency_lock.get('ok') is True,
+            'frequencyHeld': frequency_restore.get('lock_state_intact') is True,
+            'frequencyRestored': frequency_restore.get('verified') is True}, scores
 
 
 def board_test(spec, redact):
@@ -139,6 +150,11 @@ def board_test(spec, redact):
         for s in secrets:
             text = text.replace(shlex.quote(s), '[REDACTED]').replace(s, '[REDACTED]')
         return text
+    def masked_tree(value):
+        if isinstance(value, str): return masked(value)
+        if isinstance(value, list): return [masked_tree(item) for item in value]
+        if isinstance(value, dict): return {key: masked_tree(item) for key, item in value.items()}
+        return value
     class Lab(k3.Lab):
         timeout = 60
         def _ssh_prefix(self, *args, **kwargs):
@@ -162,6 +178,50 @@ def board_test(spec, redact):
     # Cooperative lock is intentionally never stolen; tools outside this workflow may not honor it.
     lease = '/tmp/k3-agent-workflow-board.lock'
     q = shlex.quote
+    previous_owner = spec.get('recoverLeaseOwner')
+    if previous_owner:
+        # Recover a named terminal run only. A failed prior attempt needs a local
+        # report proving lock rollback, no benchmark start, and relay-off invocation.
+        recovery_failure_path = spec.get('recoverFailureEvidencePath')
+        allow_terminal_failure = False
+        if recovery_failure_path:
+            recovery_evidence = Path(recovery_failure_path)
+            if not recovery_evidence.is_file() or recovery_evidence.is_symlink():
+                raise RuntimeError('Recovery evidence is missing or unsafe')
+            recovery_text = recovery_evidence.read_text(errors='replace')
+            required = ['WORKFLOW_REPORT=', '"lastPowerAction": "off"',
+                        '"rollback": {"verified": true', '"restore": {"verified": true',
+                        'K3 frequency lock failed; UnixBench not started']
+            if any(marker not in recovery_text for marker in required) or '__UNIXBENCH_DONE__' in recovery_text:
+                raise RuntimeError('Prior failure evidence does not prove pre-benchmark rollback and relay-off')
+            allow_terminal_failure = True
+        status_path = f'{cfg.log_dir.rstrip("/")}/{previous_owner}.json'
+        status_check = (
+            "import json,sys,os; run_id,allow=sys.argv[2:4]; "
+            "d=json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}; "
+            "rs=[r for r in d.get('runs',[]) if r.get('run_id')==run_id]; "
+            "r=rs[0] if len(rs)==1 else {}; c=r.get('collected') or {}; "
+            "w=c.get('workflowEvidence') or {}; "
+            "success=(r.get('status')=='complete' and r.get('exit_rc')==0 and bool(r.get('finished_at')) "
+            "and not r.get('anomalies') and c.get('status')=='success' and c.get('benchmark_exit_code')==0 "
+            "and w.get('status','').strip()=='success' and str(w.get('exitCode','')).strip()=='0' "
+            "and bool(w.get('buildId')) and bool(w.get('configHash')) and bool(w.get('release'))); "
+            "failed=(allow=='1' and (not rs or (r.get('status') in ('failed','complete') and bool(r.get('finished_at'))))); "
+            "sys.exit(0 if success or failed else 1)"
+        )
+        lab.jump(f'test "$(cat {q(lease)}/owner)" = {q(previous_owner)} || exit 78\n'
+                 f'python3 -c {q(status_check)} {q(status_path)} {q(previous_owner)} {1 if allow_terminal_failure else 0} || exit 80\n'
+                 f'if test -e {q(lease)}/runner.pid; then '
+                 f'pid=$(cat {q(lease)}/runner.pid); case "$pid" in ""|*[!0-9]*) exit 79;; esac; '
+                 'test "$pid" -gt 1 || exit 79; kill -0 "$pid" 2>/dev/null && exit 79; '
+                 f'rm -- {q(lease)}/runner.pid; fi\n'
+                 "ps -eo comm=,args= | awk '$1 ~ /^(minicom|picocom|screen)$/ || ($1 ~ /python/ && $0 ~ /k3_(unixbench|lmbench|boot)/) {found=1} END {exit found ? 1 : 0}' || exit 75\n"
+                 f"ps -eo pid=,comm=,args= | awk -v id={q(previous_owner)} '$0 ~ id && $0 !~ /awk/ {{found=1}} END {{exit found ? 1 : 0}}' || exit 75\n"
+                 'command -v fuser >/dev/null || exit 76\n'
+                 + 'owners=$(' + lab._sudo('fuser ' + q(cfg.serial_debug)) + ' 2>&1); rc=$?\n'
+                 + 'test "$rc" = 1 && test -z "$owners" || exit 77\n')
+        lab.jump(f'test "$(cat {q(lease)}/owner)" = {q(previous_owner)} && '
+                 f'test ! -e {q(lease)}/runner.pid && rm {q(lease)}/owner && rmdir {q(lease)}')
     lab.jump(f'mkdir {q(lease)} || exit 73\nprintf %s {q(spec["id"])} > {q(lease)}/owner\n')
     safe_release = False
     try:
@@ -185,16 +245,18 @@ def board_test(spec, redact):
             raise RuntimeError('TFTP upload SHA-256 mismatch')
         # Wrap, do not modify, the existing k3-auto runner. Collect full evidence BEFORE its poweroff.
         wrapper = Path(__file__).with_name('real-k3-remote.py').read_text()
-        args = json.dumps({'runner': cfg.unixbench_py, 'runId': spec['id'], 'lease': lease})
+        args = json.dumps({'runner': cfg.unixbench_py, 'runId': spec['id'], 'lease': lease,
+                           'frequencyTargets': spec.get('frequencyTargets'),
+                           'kernelRelease': build_report['kernelRelease']})
         lab.timeout = 9 * 3600
         result = lab.jump('python3 - ' + q(args) + " <<'WORKFLOW_REMOTE'\n" + wrapper + '\nWORKFLOW_REMOTE\n', env={
             'K3_IMAGE': name, 'K3_RUN_IDS': spec['id'], 'K3_LOG_PREFIX': spec['id'],
             'K3_STATUS_PATH': cfg.log_dir.rstrip('/') + '/' + spec['id'] + '.json',
-            'K3_LOG_DIR': cfg.log_dir, 'K3_MONITOR_SECONDS': '60', 'TERM': 'xterm'})
+            'K3_LOG_DIR': cfg.log_dir, 'K3_MONITOR_SECONDS': str(UNIXBENCH_MONITOR_SECONDS), 'TERM': 'xterm'})
         lab.timeout = 60
         lines = result.stdout.decode(errors='replace').splitlines()
         report = json.loads(next(line[len('WORKFLOW_REPORT='):] for line in reversed(lines) if line.startswith('WORKFLOW_REPORT=')))
-        save(out / 'evidence.json', json.loads(masked(json.dumps(report))))
+        save(out / 'evidence.json', masked_tree(report))
         # Exit of our runner and acknowledged relay-off are necessary, but not sufficient: recheck serial.
         cleanup = report.get('exitCode') == 0 and report.get('lastPowerAction') == 'off'
         if cleanup:
@@ -202,11 +264,12 @@ def board_test(spec, redact):
                      'test "$rc" = 1 && test -z "$owners" || exit 77\n')
             safe_release = True
         item = report.get('item', {})
-        checks, scores = judge_evidence(item, item.get('workflowEvidence', {}), build_report, cleanup)
+        frequency = report.get('frequency', {})
+        checks, scores = judge_evidence(item, item.get('workflowEvidence', {}), build_report, cleanup, frequency)
         final = {'mode': 'real', 'simulated': False, 'kind': 'test', 'experimentId': spec['id'],
                  'sourceHash': spec['sourceHash'], 'boardAccessed': True, 'benchmark': 'unixbench',
                  'artifactHash': sha, 'checks': checks, 'scores': scores,
-                 'evidence': str(out / 'evidence.json'), 'relayOffCommandAcknowledged': cleanup}
+                 'frequency': frequency, 'evidence': str(out / 'evidence.json'), 'relayOffCommandAcknowledged': cleanup}
         save(out / 'result.json', final)
         if not all(checks.values()):
             raise RuntimeError('UnixBench evidence incomplete/failed: ' + ', '.join(k for k,v in checks.items() if not v))

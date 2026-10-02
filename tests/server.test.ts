@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { startServer } from "../src/server.ts";
+import { startServer, SSE_EVENT_POLL_INTERVAL_MS } from "../src/server.ts";
 import { Client } from "../src/client.ts";
 import { temp, until, request, cleanup } from "./helpers.ts";
 
 test("HTTP authentication, origin rejection, validation, singleton state lock", async t => {
+  assert.equal(SSE_EVENT_POLL_INTERVAL_MS, 10_000);
   const root = await temp(t), app = await startServer({ root, port: 0 });
   cleanup(t, () => app.close());
   assert.equal((await fetch(app.url + "/health")).status, 401);
@@ -25,7 +26,7 @@ test("SSE replay, exclusive attachment, owner checks, reconnect cursor", async t
   cleanup(t, async () => { controller.abort(); await watch; });
   await until(() => connected);
   await assert.rejects(other.request("/workflows/test/pause", "POST"), /409/);
-  await until(() => events.some(e => e.type === "experiment.succeeded"));
+  await until(() => events.some(e => e.type === "experiment.succeeded"), 15_000);
   const cursor = events.at(-1).id;
   assert.equal((await c.request(`/workflows/test/experiments/${exp.id}`)).result.simulated, true);
   controller.abort(); await watch;

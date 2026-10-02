@@ -21,7 +21,7 @@ export default function (pi: ExtensionAPI) {
       return result(skills);
     },
   });
-  pi.registerTool({ name: names[1], label: "Inspect release-only optimization candidate", description: "Read exact current csrrsi/fast gate source, release-order reference, .config and the narrowly allowed AMOSWAP-release to fence+store transformation. Existing fence+store is not a new optimization. Preserve pre-existing edits; only the current configuration is tested.", parameters: Type.Object({}),
+  pi.registerTool({ name: names[1], label: "Inspect release-only optimization candidate", description: "Read the frozen Documentation/DESING.md design guidance, exact current csrrsi/fast gate source, release-order reference, .config and the narrowly allowed AMOSWAP-release to fence+store transformation. Existing fence+store is not a new optimization. Preserve pre-existing edits; only the current configuration is tested.", parameters: Type.Object({}),
     async execute() {
       const context = JSON.parse(readFileSync(candidatePath(), "utf8"));
       candidateRead = true;

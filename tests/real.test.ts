@@ -12,7 +12,7 @@ import type { Worker } from "../src/types.ts";
 import { terminal } from "../src/types.ts";
 import { temp, cleanup, until } from "./helpers.ts";
 const request = { profile: "linux-k3-real", key: "authorized" };
-const checks = { status: true, exitCode: true, scores: true, anomalies: true, rawResults: true, imageIdentity: true, cleanup: true };
+const checks = { status: true, exitCode: true, scores: true, anomalies: true, rawResults: true, imageIdentity: true, cleanup: true, frequencyLocked: true, frequencyHeld: true, frequencyRestored: true };
 function fixture(bad?: string): Worker {
   return { async run(job) {
     // Deliberately exercise the real-result validator with synthetic contract fixtures.

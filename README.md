@@ -67,5 +67,6 @@ Main Pi 进程在一轮真实实验期间保持运行，结束后退出；真实
 - [架构与通信](docs/overview.md) / [通信协议](docs/communication.md)：进程关系、派发和结果回传
 - [只读预演](docs/plan-only.md)：不执行编译或板测的 Linux → k3-auto 规划
 - [真实执行边界](docs/real-run.md)：授权、构建、板测、证据与 Main session
+- [可靠性与重试](docs/reliability.md)：锁频／重启／CPU 环境记录、串行矩阵、显式授权的一次通信恢复与五分钟网络守护
 - [实验记录](docs/experiments/linux-k3-csrrsi-fast-real.md)：一次真实 Build/UnixBench 结果；无基线，不代表性能提升
 - [验证与开发](docs/verification.md) / [维护说明](docs/development.md)

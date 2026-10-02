@@ -8,6 +8,8 @@ import { DemoWorker } from "./demo-worker.ts";
 import { ApiError, workflowName } from "./types.ts";
 import type { Stage, Worker, PlanningOptions, ExecutionOptions } from "./types.ts";
 
+export const SSE_EVENT_POLL_INTERVAL_MS = 10_000;
+
 async function body(req: IncomingMessage): Promise<unknown> {
   req.setEncoding("utf8");
   let data = "";
@@ -82,7 +84,7 @@ export async function startServer(options: { root: string; port?: number; token?
         const timer = setInterval(() => {
           if (res.writableLength > 1024 * 1024) return res.destroy();
           if (!res.writableNeedDrain) pump();
-        }, 50);
+        }, SSE_EVENT_POLL_INTERVAL_MS);
         const heartbeat = setInterval(() => {
           if (!res.writableNeedDrain) res.write(": heartbeat\n\n");
         }, 5000);

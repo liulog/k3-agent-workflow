@@ -129,7 +129,7 @@ test("HTTP/SSE completes plan-only task and returns both plans", async t => {
   const exp = await client.request("/workflows/asm/experiments", "POST", request);
   const abort = new AbortController(), received: any[] = [];
   const watch = client.watch("asm", 0, abort.signal, event => { received.push(event); if (event.type === "experiment.succeeded") abort.abort(); });
-  const deadline = setTimeout(() => abort.abort(), 10000);
+  const deadline = setTimeout(() => abort.abort(), 15000);
   cleanup(t, async () => { clearTimeout(deadline); abort.abort(); await watch; });
   await watch;
   assert.equal(received.at(-1).type, "experiment.succeeded");

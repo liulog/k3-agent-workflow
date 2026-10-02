@@ -3,16 +3,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { AgentWorker, ROLE_MODELS, THINKING } from "../src/agent-worker.ts";
+import { AgentWorker, ROLE_MODELS, ROLE_THINKING, verifyAgentRuntime } from "../src/agent-worker.ts";
 import { gateFiles, prepareCandidate, releaseCandidate, applyCandidate } from "../src/release-candidate.ts";
 import { hash } from "../src/engine.ts";
 import { temp } from "./helpers.ts";
 function setup(root: string) {
   const linux = join(root, "linux"), out = join(root, "run");
-  const files = [...gateFiles, "arch/riscv/include/asm/haoc/iee-asm.h", "arch/riscv/include/asm/haoc/iee-csrrsi.h", "arch/riscv/include/asm/barrier.h", "arch/riscv/kernel/haoc/iee/iee-init.c", "arch/riscv/kernel/haoc/iee/iee-mmu-csrrsi-fast.c", ".config"];
+  const files = [...gateFiles, "Documentation/DESING.md", "arch/riscv/include/asm/haoc/iee-asm.h", "arch/riscv/include/asm/haoc/iee-csrrsi.h", "arch/riscv/include/asm/barrier.h", "arch/riscv/kernel/haoc/iee/iee-init.c", "arch/riscv/kernel/haoc/iee/iee-mmu-csrrsi-fast.c", ".config"];
   for (const path of files) {
     mkdirSync(dirname(join(linux, path)), { recursive: true });
-    writeFileSync(join(linux, path), gateFiles.includes(path) ? "\tamoswap.w.aq t2, t2, (t6)\n\tamoswap.w.rl zero, zero, (t5)\n" : path === ".config" ? "CONFIG_IEE=y\nCONFIG_IEE_GATE_CSRRSI=y\nCONFIG_PTP=y\nCONFIG_IEE_GATE_CSRRSI_FAST=y\nCONFIG_IEE_SIP=y\nCONFIG_CREDP=y\n" : "fixture\n");
+    writeFileSync(join(linux, path), gateFiles.includes(path) ? "\tamoswap.w.aq t2, t2, (t6)\n\tamoswap.w.rl zero, zero, (t5)\n" : path === ".config" ? "CONFIG_IEE=y\nCONFIG_IEE_GATE_CSRRSI=y\nCONFIG_PTP=y\nCONFIG_IEE_GATE_CSRRSI_FAST=y\nCONFIG_IEE_SIP=y\nCONFIG_CREDP=y\n" : path === "Documentation/DESING.md" ? "Frozen optimization design guidance fixture\n" : "fixture\n");
   }
   mkdirSync(out);
   const candidate = prepareCandidate(linux, out);
@@ -37,6 +37,10 @@ test("candidate refuses changed source and preserves the original snapshot", asy
   assert.throws(() => applyCandidate(candidate), /Source changed/);
   assert.equal(readFileSync(path, "utf8"), "concurrent user edit");
   assert.match(readFileSync(join(candidate, "before", gateFiles[0]), "utf8"), /amoswap.w.rl/);
+  const context = JSON.parse(readFileSync(join(candidate, "context.json"), "utf8"));
+  const guidance = context.files.find((file: any) => file.path === "Documentation/DESING.md");
+  assert.ok(guidance?.sha256);
+  assert.equal(readFileSync(join(candidate, "before", guidance.path), "utf8"), "Frozen optimization design guidance fixture\n");
 });
 for (const mode of ["ok", "wrong-model", "wrong-thinking", "no-dispatch", "summary-error"]) {
   test(`Luna delegation ${mode}: runtime, dispatch and physical result stay distinct`, async t => {
@@ -44,7 +48,7 @@ for (const mode of ["ok", "wrong-model", "wrong-thinking", "no-dispatch", "summa
     let calls = 0, phase = 0, stopped = false;
     class FakeClient {
       options: any;
-      constructor(options: any) { this.options = options; assert.ok(options.args.includes(THINKING)); }
+      constructor(options: any) { this.options = options; assert.ok(options.args.includes(ROLE_THINKING.build)); }
       onEvent() {} async start() {} async setAutoRetry() {} async abort() {}
       async stop() { stopped = true; }
       async getState() { return { model: { provider: "openai-codex", id: mode === "wrong-model" ? "gpt-6-astra" : "gpt-6-luna" }, thinkingLevel: mode === "wrong-thinking" ? "high" : "medium" }; }
@@ -68,7 +72,14 @@ for (const mode of ["ok", "wrong-model", "wrong-thinking", "no-dispatch", "summa
     assert.equal(stopped, true);
   });
 }
-test("requested role models and thinking are exact, not fuzzy aliases", () => {
+test("Main runtime enforces Sol/high rather than silently accepting medium", async t => {
+  const path = join(await temp(t), "main-runtime.json");
+  const client = (thinkingLevel: string) => ({ async getState() { return { model: { provider: "openai-codex", id: "gpt-6.1-sol" }, thinkingLevel }; } });
+  await verifyAgentRuntime(client("high"), ROLE_MODELS.main, ROLE_THINKING.main, path);
+  assert.equal(JSON.parse(readFileSync(path, "utf8")).thinking, "high");
+  await assert.rejects(verifyAgentRuntime(client("medium"), ROLE_MODELS.main, ROLE_THINKING.main, path), /configuration mismatch/);
+});
+test("requested role models and thinking levels are exact", () => {
   assert.deepEqual(ROLE_MODELS, { main: "openai-codex/gpt-6.1-sol", build: "openai-codex/gpt-6-luna", test: "openai-codex/gpt-6-luna" });
-  assert.equal(THINKING, "medium");
+  assert.deepEqual(ROLE_THINKING, { main: "high", build: "medium", test: "medium" });
 });

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "../src/engine.ts";
+import { Engine, SCHEDULER_POLL_INTERVAL_MS } from "../src/engine.ts";
 import { DemoWorker } from "../src/demo-worker.ts";
 import { terminal } from "../src/types.ts";
 import type { Worker, Job } from "../src/types.ts";
@@ -13,6 +13,15 @@ async function setup(t: Parameters<typeof temp>[0], worker: Worker = new DemoWor
   cleanup(t, () => engine.close());
   return engine;
 }
+test("scheduler uses a 10-second fallback and wakes promptly for new work", async t => {
+  assert.equal(SCHEDULER_POLL_INTERVAL_MS, 10_000);
+  const engine = await setup(t, new DemoWorker(1));
+  engine.start();
+  const exp = engine.submit("asm", request());
+  assert.equal(exp.status, "queued");
+  await until(() => terminal(engine.store.get(exp.id)!.status), 3000);
+  assert.equal(engine.store.get(exp.id)!.status, "succeeded");
+});
 test("snapshot, dependent stages, validated result, atomic durable event history", async t => {
   const engine = await setup(t);
   const exp = engine.submit("asm", request());

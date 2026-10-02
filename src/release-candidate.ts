@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync, lstatSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { hash } from "./engine.ts";
 export const gateFiles = ["arch/riscv/kernel/haoc/iee/iee-gate-csrrsi.S", "arch/riscv/kernel/haoc/iee/iee-gate-csrrsi-fast.S"];
-const references = ["arch/riscv/include/asm/haoc/iee-asm.h", "arch/riscv/include/asm/haoc/iee-csrrsi.h", "arch/riscv/include/asm/barrier.h", "arch/riscv/kernel/haoc/iee/iee-init.c", "arch/riscv/kernel/haoc/iee/iee-mmu-csrrsi-fast.c", ".config"];
+const references = ["Documentation/DESING.md", "arch/riscv/include/asm/haoc/iee-asm.h", "arch/riscv/include/asm/haoc/iee-csrrsi.h", "arch/riscv/include/asm/barrier.h", "arch/riscv/kernel/haoc/iee/iee-init.c", "arch/riscv/kernel/haoc/iee/iee-mmu-csrrsi-fast.c", ".config"];
 export function releaseCandidate(text: string) {
   let replacements = 0;
   const content = text.replace(/^([ \t]*)amoswap\.w\.rl[ \t]+zero,[ \t]*zero,[ \t]*\((t[0-6])\)([^\r\n]*)$/gm,

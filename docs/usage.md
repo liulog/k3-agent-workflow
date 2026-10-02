@@ -180,6 +180,6 @@ git submodule update --init --recursive
 
 这不是生产级硬件控制系统，也不是 OS 安全沙箱：原 demo Worker 的 `read,write` 仍有该用户的文件权限；plan-only 另以受限 `read` 工具强制执行资料白名单，但不隔离恶意同用户进程或 Pi runtime。HTTP token 防止无授权的本机请求，不代替操作系统隔离。
 
-当前不支持：通用构建配置、完整 Git 仓库快照、多板资源租约、远程 Worker、自动重试、产物 GC、预算在线修改、成本/时间总预算、跨机器认证。
+Coordinator 当前不支持：通用构建配置、完整 Git 仓库快照、多板资源租约、远程 Worker、通用自动重试、产物 GC、预算在线修改、成本/时间总预算、跨机器认证。独立串行 matrix 已有显式授权的一次通信恢复与五分钟网络等待，不改变默认 profile 的安全边界，见[可靠性与重试](reliability.md)。
 
 当前真实入口只支持固定工作树、既有 `.config`、单 Image 和单板 UnixBench；不支持通用构建配置、完整可复现 worktree、多板租约或自动恢复。扩展这些能力前仍需补齐 commit/worktree 快照、部署版本确认、跨工具设备独占和故障接管；不能把 demo 的“杀进程即取消”用于硬件任务。

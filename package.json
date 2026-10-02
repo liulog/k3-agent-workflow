@@ -10,7 +10,8 @@
     "demo": "node scripts/demo.ts",
     "plan:check": "node src/cli.ts check-plan --plan-config planning.example.json",
     "plan:demo": "node scripts/plan-experiment.ts --config planning.example.json",
-    "test": "node --test tests/*.test.ts"
+    "test": "node --test tests/*.test.ts",
+    "test:contracts": "python3 tests/real_contracts.py && python3 tests/reboot_guard.py && python3 tests/reliability.py"
   },
   "keywords": ["pi-package"],
   "pi": { "extensions": ["./extension/index.ts"] },

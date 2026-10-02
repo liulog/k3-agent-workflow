@@ -33,7 +33,7 @@ test("extension registers tools, subscribes, delivers follow-up, cleans up and d
   await until(() => statuses.some(s => s.includes("connected")));
   const submit = (key: string) => tools.get("workflow_submit").execute("call", { key, candidate: "ret", hypothesis: "test" });
   await submit("first");
-  await until(() => messages.length === 1);
+  await until(() => messages.length === 1, 15_000);
   assert.equal(messages[0].options.triggerTurn, false);
   assert.equal(messages[0].options.deliverAs, "followUp");
   const eventId = messages[0].message.details.eventId;
@@ -42,7 +42,7 @@ test("extension registers tools, subscribes, delivers follow-up, cleans up and d
   assert.equal(entries.at(-1).data.cursor, eventId);
   await command.handler("auto on", ctx);
   await submit("second");
-  await until(() => messages.length === 2);
+  await until(() => messages.length === 2, 15_000);
   assert.equal(messages[1].options.triggerTurn, true);
   assert.equal(messages[1].options.deliverAs, "followUp");
   assert.ok(entries.some(e => e.data?.cursor > 0));
