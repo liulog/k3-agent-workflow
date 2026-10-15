@@ -21,17 +21,19 @@
   "name": "com260-smoke",
   "agent": {"type": "pi", "provider": "openai-codex", "model": "gpt-6.1-sol"},
   "prompt": "只读查询指定板卡，保存原始输出和退出码；连接失败停止，不安装、不编译、不操作电源。",
-  "skills": [{"name": "k3-status", "path": "/path/to/k3-auto/skills/k3-status/SKILL.md"}],
+  "skills": [{"name": "k3-status", "path": "./integrations/k3-auto/skills/k3-status/SKILL.md"}],
   "board": {
     "name": "com260",
     "jump": {"host": "JUMP_HOST", "port": 22, "user": "JUMP_USER", "password": "", "identityFile": "", "workingDirectory": "/path/on/jump/autolink_k3"},
     "ssh": {"host": "BOARD_HOST", "port": 22, "user": "BOARD_USER", "password": "", "identityFile": ""}
   },
-  "tools": {"k3AutoRoot": "/path/to/k3-auto"},
+  "tools": {"k3AutoRoot": "./integrations/k3-auto"},
   "tests": [{"name": "kernel", "prompt": "执行 uname -r 和 uname -m，要求版本非空且架构为 riscv64。"}],
   "outputDir": ".workflow/com260-smoke"
 }
 ```
+
+示例从 workflow 仓库根目录使用，skill、工具及输出的相对路径均以该目录为基准。`integrations/k3-auto` 是固定提交的子模块，获取仓库后用 `git submodule update --init --recursive` 获取对应版本；更新工具时同时提交子模块引用，避免运行时自动追踪浮动版本。
 
 将示例复制成 `com260-smoke.local.json`，填写现场信息并设置权限为 `600`。所有 `*.local.json` 已忽略；不要将真实密码填入公开示例。模型认证使用 agent 自己的本机认证配置，不写进实验 JSON。示例模型需在执行环境中可用。
 

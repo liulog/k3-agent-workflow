@@ -9,7 +9,7 @@
   "skills": [
     {
       "name": "k3-status",
-      "path": "/path/to/k3-auto/skills/k3-status/SKILL.md"
+      "path": "./integrations/k3-auto/skills/k3-status/SKILL.md"
     }
   ],
   "board": {
@@ -31,7 +31,7 @@
     }
   },
   "tools": {
-    "k3AutoRoot": "/path/to/k3-auto"
+    "k3AutoRoot": "./integrations/k3-auto"
   },
   "tests": [
     {
