@@ -11,3 +11,10 @@ __pycache__/
 output/**/*.svg
 output/**/*.png
 output/**/*.pptx
+
+examples/workflow/*.local.json
+
+# Local experiment notes and private connection configuration
+docs/experiments/
+*.local.json
+*.local.toml

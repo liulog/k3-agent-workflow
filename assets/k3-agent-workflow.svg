@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="660" viewBox="0 0 1500 660" role="img" aria-labelledby="title desc">
+  <title id="title">K3 Agent Workflow</title>
+  <desc id="desc">JSON 配置经过 Core 编排器、单个执行 Agent、K3 工具、跳板机到达物理板卡。Skill 模块连接 Agent，日志与证据汇总为 summary.json 和 summary.md。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#52789B"/></marker>
+    <style>
+      .box{stroke-width:2;rx:12}.label{font-family:Arial,'Noto Sans SC','Microsoft YaHei',sans-serif;fill:#20354A;text-anchor:middle}.heading{font-size:16px;font-weight:700}.detail{font-size:12px}.flow{fill:none;stroke:#52789B;stroke-width:2.5;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1500" height="660" fill="#FFFFFF"/>
+  <text x="750" y="58" class="label" font-size="28" font-weight="700">K3 Agent Workflow</text>
+  <rect x="50" y="150" width="210" height="110" class="box" fill="#EDF4FA" stroke="#6B88A3"/>
+  <text x="155" y="190" class="label heading">JSON 配置</text><text x="155" y="218" class="label detail">模型 · prompt · skill</text><text x="155" y="238" class="label detail">板卡连接信息 · 测试列表</text>
+  <rect x="320" y="150" width="220" height="110" class="box" fill="#D9E8F5" stroke="#52789B"/>
+  <text x="430" y="193" class="label heading">Core 编排器</text><text x="430" y="224" class="label detail">解析 · 串行调度 · 状态管理</text>
+  <rect x="600" y="150" width="190" height="110" class="box" fill="#C9DDEE" stroke="#406C91"/>
+  <text x="695" y="212" class="label heading">单个执行 Agent</text>
+  <rect x="850" y="150" width="150" height="110" class="box" fill="#D9E8F5" stroke="#52789B"/><text x="925" y="212" class="label heading">K3 工具</text>
+  <rect x="1060" y="150" width="150" height="110" class="box" fill="#E4EDF4" stroke="#607D96"/><text x="1135" y="212" class="label heading">跳板机</text>
+  <rect x="1270" y="150" width="160" height="110" class="box" fill="#EEF3F7" stroke="#607D96"/><text x="1350" y="212" class="label heading">物理板卡</text>
+  <path d="M260 205 H320" class="flow"/><path d="M540 205 H600" class="flow"/><path d="M790 205 H850" class="flow"/><path d="M1000 205 H1060" class="flow"/><path d="M1210 205 H1270" class="flow"/>
+  <rect x="620" y="320" width="150" height="70" class="box" fill="#F4F7FA" stroke="#7B93A8"/><text x="695" y="361" class="label heading" font-size="15">Skill 模块</text><path d="M695 320 V260" class="flow"/>
+  <rect x="480" y="470" width="190" height="80" class="box" fill="#EDF4FA" stroke="#6B88A3"/><text x="575" y="517" class="label heading">日志与证据</text>
+  <rect x="760" y="470" width="230" height="80" class="box" fill="#D9E8F5" stroke="#52789B"/><text x="875" y="502" class="label heading">结果汇总</text><text x="875" y="528" class="label detail">summary.json · summary.md</text>
+  <path d="M630 260 V430 H575 V470" class="flow"/><path d="M670 510 H760" class="flow"/>
+  <text x="1430" y="630" text-anchor="end" font-family="Arial,'Noto Sans SC','Microsoft YaHei',sans-serif" font-size="12" font-style="italic" fill="#607D96">目标架构，真实接入待完成</text>
+</svg>

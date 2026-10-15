@@ -77,4 +77,4 @@ SSE 事件是进度通知；权威结果仍是经 Coordinator 验证的任务记
 
 HTTP 绑定本机并要求 Bearer token；阶段状态、事件、快照和日志保存在 gitignored 的 `.workflow/`。硬件安全仍不是 OS 安全沙箱；远端锁也不能阻止不遵守锁的其他工具。SSH 断开不能证明板卡下电。
 
-状态机、HTTP 路由和失败处理见[设计说明](design.md)；本轮真实证据摘要见[实验记录](experiments/linux-k3-csrrsi-fast-real.md)。
+状态机、HTTP 路由和失败处理见[设计说明](design.md)；本轮真实证据摘要见实验记录（现场记录仅保存在本地，不随仓库发布）。

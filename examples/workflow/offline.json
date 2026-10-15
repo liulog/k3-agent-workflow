@@ -1,0 +1,19 @@
+{
+  "apiVersion": "k3.experiment/v1",
+  "key": "offline-example-001",
+  "mode": "demo",
+  "prompt": "检查任务传递与技能快照。所有结果是模拟，不执行实际操作。",
+  "skills": [],
+  "tests": [
+    {
+      "id": "image-a-eight",
+      "prompt": "根据给定镜像与参数规划测试，实际执行后应由受信工具校验证据。",
+      "params": {"image": "/example/Image-a", "copies": 8, "rounds": 5}
+    },
+    {
+      "id": "image-b-sixteen",
+      "prompt": "使用第二个镜像，保持此任务指定的 copy 数和轮数。",
+      "params": {"image": "/example/Image-b", "copies": 16, "rounds": 3}
+    }
+  ]
+}

@@ -41,7 +41,7 @@ PPTX 导出因本机缺少 `python-pptx` 未执行；没有为此安装依赖。
 - 真实 `openai-codex/gpt-5.6-luna` 双 Worker：第一次因路径拼写错误被拒绝，局部修正后第二次通过。Build 完整读 6 个文件，Test 完整读 3 skills、2 文档及 Build 计划，计划 hash 一致。
 - 未编译、未执行 k3ctl/SSH/串口/上下电/benchmark；主 Astra 模型由脚本代替，交互式主会话尚待用户部署验证。
 
-详细证据、限制和复现入口见 [MVP 实验报告](experiments/linux-k3-plan-smoke.md)。
+详细证据、限制和复现入口见 MVP 实验报告（现场记录仅保存在本地，不随仓库发布）。
 
 ## MVP 简化回归
 
@@ -58,7 +58,7 @@ PPTX 导出因本机缺少 `python-pptx` 未执行；没有为此安装依赖。
 - 主 Agent 的终态总结遇到额度限制；已补充最终 stopReason/文本检查，不再输出 `undefined`，也不改写任务事实。
 - 远端包装器新增信号收尾处理，并用无硬件假 runner 验证；不保证 SIGKILL 或主机丢失时安全收尾。
 - 离线回归现在为 60 项；真实全流程尚未验收通过，未自动重试模型或硬件。
-- 详细经过、证据和当前边界见 [首次真实实验](experiments/linux-k3-real-first.md)。
+- 详细经过、证据和当前边界见 首次真实实验（现场记录仅保存在本地，不随仓库发布）。
 
 ## 敏感信息审查（基于 main `315c253`）
 
@@ -78,7 +78,7 @@ PPTX 导出因本机缺少 `python-pptx` 未执行；没有为此安装依赖。
 - Main / Build / Test 的运行时记录分别核实为 `gpt-6.1-sol / medium`、`gpt-6-luna / medium`、`gpt-6-luna / medium`。
 - 原有 `.config` 已启用 CSRRSI FAST + PTP，CREDP/SIP 也保持开启；配置与源码检查未变化。本轮释放代码已是 `fence rw,w` + `sw zero`，候选没有产生新源码替换。
 - 1-copy 571.6、16-copy 3594.9；status、exitCode、scores、anomalies、rawResults、imageIdentity、cleanup 七项门禁全部通过。
-- 没有性能对照，不据此宣称性能提升。完整摘要和本机证据路径见[实验报告](experiments/linux-k3-csrrsi-fast-real.md)；原始日志、Image 和证据不提交。
+- 没有性能对照，不据此宣称性能提升。完整摘要和本机证据路径见实验报告（现场记录仅保存在本地，不随仓库发布）；原始日志、Image 和证据不提交。
 - 此实验使用临时 Main RPC 会话。后续真实入口改为复用 `.workflow/main-agent-session/` 下的持久 Pi session；该持久化改动通过离线测试与无模型 Pi session smoke 验证，尚未在下一轮真实 workflow 中运行验证。
 
 ## 锁频、重启检测与有界通信恢复（2026-10-02）

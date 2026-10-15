@@ -60,6 +60,6 @@ Main 使用固定 Pi session ID `linux-k3-workflow-main`，会话文件保存在
 
 凭据由 k3-auto 在运行时读取，不传给主 Agent；远端输出保存前按配置中的密码脱敏。日志、配置、Image 和原始结果均不得提交 Git。
 
-首次真实运行的中断经过见[实验报告](experiments/linux-k3-real-first.md)。随后 CSRRSI FAST + PTP 的真实实验完成 Build 与一轮 UnixBench，所有结果门禁通过；详见[实验报告](experiments/linux-k3-csrrsi-fast-real.md)。两次运行均无性能基线，不能据单次跑分声称优化收益。
+首次真实运行的中断经过见实验报告（现场记录仅保存在本地，不随仓库发布）。随后 CSRRSI FAST + PTP 的真实实验完成 Build 与一轮 UnixBench，所有结果门禁通过；详见实验报告（现场记录仅保存在本地，不随仓库发布）。两次运行均无性能基线，不能据单次跑分声称优化收益。
 
 `tests/real.test.ts`、`tests/real_contracts.py`、`tests/reboot_guard.py`、`tests/reliability.py` 只用夹具和 mock 验证门禁、重启/取消、状态和有界恢复，不实际调用模型、编译或硬件。真实执行是否完成，以对应实验的日志和终态为准。

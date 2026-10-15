@@ -126,7 +126,7 @@ node src/cli.ts serve --rpc-demo-model your-provider/luna
 - 要求生成模拟 artifact 和严格的 `result.json`，不提供 bash 工具；
 - 60 秒超时、输出大小限制、进程退出检测、取消与进程组清理。
 
-本节的原 `demo` 模式通过假 Pi 子进程做协议回归。新增 `linux-k3-plan` 模式另已完成真实 Luna 只读预演，见 [实验报告](experiments/linux-k3-plan-smoke.md)。两者都不代表已经完成真实编译/板测集成。
+本节的原 `demo` 模式通过假 Pi 子进程做协议回归。新增 `linux-k3-plan` 模式另已完成真实 Luna 只读预演，见 实验报告（现场记录仅保存在本地，不随仓库发布）。两者都不代表已经完成真实编译/板测集成。
 
 ## 数据、日志与恢复
 
